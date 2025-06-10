@@ -147,8 +147,8 @@ fn write_amount<W: io::Write>(amount: i64, mut writer: W) -> Result<usize, io::E
     Ok(len)
 }
 
-fn read_array_len<D: io::Read>(mut stream: D) -> u64 {
-    return VarInt::consensus_decode(&mut stream).expect("read error").0;
+fn read_array_len<D: io::Read>(mut stream: D) -> Result<u64, encode::Error> {
+    return Ok(VarInt::consensus_decode(&mut stream)?.0);
 }
 
 impl Decodable for PegOutCoin {
@@ -170,7 +170,7 @@ impl Encodable for PegOutCoin {
 
 impl Decodable for Kernel {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let features = u8::consensus_decode(&mut d).expect("read error");
+        let features = u8::consensus_decode(&mut d)?;
         let fee =
             if features & (KernelFeatures::FeeFeatureBit as u8) != 0 {
                 Some(read_amount(&mut d)?)
@@ -187,7 +187,7 @@ impl Decodable for Kernel {
             };
         let mut pegouts = Vec::<PegOutCoin>::new();
         if features & (KernelFeatures::PegoutFeatureBit as u8) != 0 {
-            let len = read_array_len(&mut d);
+            let len = read_array_len(&mut d)?;
             for _ in 0 .. len {
                 pegouts.push(PegOutCoin::consensus_decode(&mut d)?);
             }
@@ -202,7 +202,7 @@ impl Decodable for Kernel {
         let stealth_excess =
             if features & (KernelFeatures::StealthExcessFeatureBit as u8) != 0 {
                 let pubkey_bytes: [u8; 33] = Decodable::consensus_decode(&mut d)?;
-                Some(PublicKey::from_slice(&pubkey_bytes).unwrap())
+                Some(PublicKey::from_slice(&pubkey_bytes).map_err(|_| encode::Error::ParseFailed("Invalid stealth excess public key"))?)
             }
             else {
                 None
@@ -310,11 +310,11 @@ impl Decodable for Input {
         let output_id: [u8; 32] = Decodable::consensus_decode(&mut d)?;
         let commitment: [u8; 33] = Decodable::consensus_decode(&mut d)?;
         let output_public_key_bytes: [u8; 33] = Decodable::consensus_decode(&mut d)?;
-        let output_public_key = PublicKey::from_slice(&output_public_key_bytes).unwrap();
+        let output_public_key = PublicKey::from_slice(&output_public_key_bytes).map_err(|_| encode::Error::ParseFailed("Invalid output public key"))?;
         let input_public_key =
             if features & 1 != 0 {
                 let input_public_key_bytes: [u8; 33] = Decodable::consensus_decode(&mut d)?;
-                Some(PublicKey::from_slice(&input_public_key_bytes).unwrap())
+                Some(PublicKey::from_slice(&input_public_key_bytes).map_err(|_| encode::Error::ParseFailed("Invalid input public key"))?)
             }
             else {
                 None
@@ -434,9 +434,9 @@ impl Decodable for Output {
     fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
         let commitment = Decodable::consensus_decode(&mut d)?;
         let sender_pubkey_bytes : [u8; 33] = Decodable::consensus_decode(&mut d)?;
-        let sender_public_key = PublicKey::from_slice(&sender_pubkey_bytes).unwrap();
+        let sender_public_key = PublicKey::from_slice(&sender_pubkey_bytes).map_err(|_| encode::Error::ParseFailed("Invalid sender public key"))?;
         let receiver_pubkey_bytes : [u8; 33] = Decodable::consensus_decode(&mut d)?;
-        let receiver_public_key = PublicKey::from_slice(&receiver_pubkey_bytes).unwrap();
+        let receiver_public_key = PublicKey::from_slice(&receiver_pubkey_bytes).map_err(|_| encode::Error::ParseFailed("Invalid receiver public key"))?;
         let message = OutputMessage::consensus_decode(&mut d)?;
         let range_proof : [u8;  675] = Decodable::consensus_decode(&mut d)?;
         let signature: [u8; 64] = Decodable::consensus_decode(&mut d)?;
@@ -459,7 +459,7 @@ impl Decodable for OutputMessage {
         let standard_fields =
             if features & (OutputFeatures::StandardFieldsFeatureBit as u8) != 0 {
                 let pubkey_bytes : [u8; 33] = Decodable::consensus_decode(&mut d)?;
-                let key_exchange_pubkey = PublicKey::from_slice(&pubkey_bytes).unwrap();
+                let key_exchange_pubkey = PublicKey::from_slice(&pubkey_bytes).map_err(|_| encode::Error::ParseFailed("Invalid key exchange public key"))?;
                 let view_tag = u8::consensus_decode(&mut d)?;
                 let masked_value = u64::consensus_decode(&mut d)?;
                 let masked_nonce: [u8; 16] = Decodable::consensus_decode(&mut d)?;

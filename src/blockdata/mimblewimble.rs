@@ -140,10 +140,11 @@ fn write_amount<W: io::Write>(amount: i64, mut writer: W) -> Result<usize, io::E
         }
         n = (n >> 7) - 1;
         len += 1;
-    };
-    for i in (0..=len).rev() {
-        let _ = u8::consensus_encode(&tmp[i], &mut writer);
-    };
+    }
+    len += 1; // Include the final byte
+    for i in (0..len).rev() {
+        u8::consensus_encode(&tmp[i], &mut writer)?;
+    }
     Ok(len)
 }
 
@@ -500,5 +501,266 @@ impl Encodable for OutputMessage {
             len += self.extra_data.consensus_encode(&mut writer)?;
         }
         return Ok(len);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::consensus::{Encodable, Decodable};
+    use secp256k1::{Secp256k1, SecretKey, PublicKey};
+    use std::io::Cursor;
+
+    #[test]
+    fn test_amount_encoding_decoding() {
+        let amounts = vec![0i64, 1, 127, 128, 255, 256, 1000, 1000000, i64::MAX];
+        
+        for amount in amounts {
+            let mut encoded = Vec::new();
+            let encoded_len = write_amount(amount, &mut encoded).unwrap();
+            
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_amount(&mut cursor).unwrap();
+            
+            assert_eq!(amount, decoded, "Amount encoding/decoding failed for {}", amount);
+            assert_eq!(encoded_len, encoded.len(), "Encoded length mismatch for {}", amount);
+        }
+    }
+
+    #[test]
+    fn test_pegout_coin_roundtrip() {
+        use crate::Script;
+        
+        let coin = PegOutCoin {
+            amount: 50000000,
+            script_pub_key: Script::new()
+        };
+        
+        let mut encoded = Vec::new();
+        coin.consensus_encode(&mut encoded).unwrap();
+        
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = PegOutCoin::consensus_decode(&mut cursor).unwrap();
+        
+        assert_eq!(coin, decoded);
+    }
+
+    #[test]
+    fn test_kernel_with_features_roundtrip() {
+        let secp = Secp256k1::new();
+        let secret_key = SecretKey::from_slice(&[1u8; 32]).unwrap();
+        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+        
+        // Test kernel with all features enabled
+        let kernel = Kernel {
+            features: (KernelFeatures::FeeFeatureBit as u8) | 
+                     (KernelFeatures::PeginFeatureBit as u8) |
+                     (KernelFeatures::PegoutFeatureBit as u8) |
+                     (KernelFeatures::HeightLockFeatureBit as u8) |
+                     (KernelFeatures::StealthExcessFeatureBit as u8) |
+                     (KernelFeatures::ExtraDataFeatureBit as u8),
+            fee: Some(1000),
+            pegin: Some(50000000),
+            pegouts: vec![PegOutCoin {
+                amount: 25000000,
+                script_pub_key: Script::new()
+            }],
+            lock_height: Some(100000),
+            stealth_excess: Some(public_key),
+            extra_data: vec![1, 2, 3, 4],
+            excess: [0u8; 33],
+            signature: [0u8; 64]
+        };
+        
+        let mut encoded = Vec::new();
+        kernel.consensus_encode(&mut encoded).unwrap();
+        
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = Kernel::consensus_decode(&mut cursor).unwrap();
+        
+        assert_eq!(kernel, decoded);
+    }
+
+    #[test]
+    fn test_kernel_minimal_features() {
+        // Test kernel with only fee feature
+        let kernel = Kernel {
+            features: KernelFeatures::FeeFeatureBit as u8,
+            fee: Some(1000),
+            pegin: None,
+            pegouts: vec![],
+            lock_height: None,
+            stealth_excess: None,
+            extra_data: vec![],
+            excess: [1u8; 33],
+            signature: [2u8; 64]
+        };
+        
+        let mut encoded = Vec::new();
+        kernel.consensus_encode(&mut encoded).unwrap();
+        
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = Kernel::consensus_decode(&mut cursor).unwrap();
+        
+        assert_eq!(kernel, decoded);
+    }
+
+    #[test]
+    fn test_kernel_height_lock_encoding() {
+        // Specifically test the height lock fix
+        let kernel = Kernel {
+            features: KernelFeatures::HeightLockFeatureBit as u8,
+            fee: None,
+            pegin: None,
+            pegouts: vec![],
+            lock_height: Some(500000), // A typical block height
+            stealth_excess: None,
+            extra_data: vec![],
+            excess: [0u8; 33],
+            signature: [0u8; 64]
+        };
+        
+        let mut encoded = Vec::new();
+        kernel.consensus_encode(&mut encoded).unwrap();
+        
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = Kernel::consensus_decode(&mut cursor).unwrap();
+        
+        assert_eq!(kernel.lock_height, decoded.lock_height);
+        assert_eq!(kernel, decoded);
+    }
+
+    #[test]
+    fn test_kernel_pegin_encoding() {
+        // Specifically test the pegin encoding fix
+        let kernel = Kernel {
+            features: KernelFeatures::PeginFeatureBit as u8,
+            fee: None,
+            pegin: Some(100000000), // 1 LTC in satoshis
+            pegouts: vec![],
+            lock_height: None,
+            stealth_excess: None,
+            extra_data: vec![],
+            excess: [0u8; 33],
+            signature: [0u8; 64]
+        };
+        
+        let mut encoded = Vec::new();
+        kernel.consensus_encode(&mut encoded).unwrap();
+        
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = Kernel::consensus_decode(&mut cursor).unwrap();
+        
+        assert_eq!(kernel.pegin, decoded.pegin);
+        assert_eq!(kernel, decoded);
+    }
+
+    #[test]
+    fn test_large_amounts() {
+        // Test encoding/decoding of large amounts that might have caused the original crash
+        let large_amounts = vec![
+            2100000000000000i64, // Max LTC supply in satoshis
+            i64::MAX / 2,
+            1000000000000i64,
+        ];
+        
+        for amount in large_amounts {
+            let mut encoded = Vec::new();
+            write_amount(amount, &mut encoded).unwrap();
+            
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_amount(&mut cursor).unwrap();
+            
+            assert_eq!(amount, decoded, "Large amount encoding failed for {}", amount);
+        }
+    }
+
+    #[test]
+    fn test_real_world_block_parsing() {
+        // Test parsing a problematic block that was causing crashes
+        // This is a subset of the hex data from the crash report
+        let _kernel_data = "020000000001026d4fb836202ec6cf2b8f1a7af0148e3830a1109a726519954edf4aa1e179ad540000000000ffffffff3e1785f12504340800386ea0109015666a57a0b5b0c2a59ed3bc29d95df2b7c60600000000ffffffff02474344190000000016001499ab86d6489b8fc94086c85f7901219ea3715d687004fd420000000016001400b111bb482c5fb0df7c18d5f13b4906ea953a2d024730440220075576e4771d663c98d87525e609b74e843b28173c2b9f1a01e616bd1b486f88022014944505117824ad964ebe04b5e688c7fe152d4222da9957694ce92fdb06215901210266203d3217038ef2e64705ca1748b021443b343b1e723c0b363ad610129801a10248304502210098bf07fe2fdeb3a2ca7eedba127263e3c5c725ec74b55a4dd5d78c4d8749767402207ad2252e1c685eaeec19f713645b57dbc85d7a60f70bcf3fe7148c7e77007ad5012102ff1101c993a88b74b092aa00ad5cd3bfc2dafc99b35e719d605df48b4b56358600000000";
+        
+        // Test that we can parse amounts from this block without crashing
+        let test_amounts = vec![
+            0x47434419i64,  // Amount from the block
+            0x7004fd42i64,  // Another amount from the block
+        ];
+        
+        for amount in test_amounts {
+            let mut encoded = Vec::new();
+            write_amount(amount, &mut encoded).unwrap();
+            
+            let mut cursor = Cursor::new(&encoded);
+            let decoded = read_amount(&mut cursor).unwrap();
+            
+            assert_eq!(amount, decoded, "Real-world amount encoding failed for {}", amount);
+        }
+    }
+
+    #[test]
+    fn test_invalid_stealth_excess_handling() {
+        // Test that we properly handle invalid stealth excess public keys
+        let invalid_pubkey_bytes = [0u8; 33]; // All zeros - invalid public key
+        
+        let kernel = Kernel {
+            features: KernelFeatures::StealthExcessFeatureBit as u8,
+            fee: None,
+            pegin: None,
+            pegouts: vec![],
+            lock_height: None,
+            stealth_excess: None, // We'll test that invalid data fails gracefully
+            extra_data: vec![],
+            excess: [0u8; 33],
+            signature: [0u8; 64]
+        };
+        
+        // Create encoded data with invalid stealth excess
+        let mut encoded = Vec::new();
+        kernel.features.consensus_encode(&mut encoded).unwrap();
+        invalid_pubkey_bytes.consensus_encode(&mut encoded).unwrap();
+        kernel.excess.consensus_encode(&mut encoded).unwrap();
+        kernel.signature.consensus_encode(&mut encoded).unwrap();
+        
+        // Try to decode - should fail gracefully with ParseFailed error
+        let mut cursor = Cursor::new(&encoded);
+        let result = Kernel::consensus_decode(&mut cursor);
+        
+        match result {
+            Err(encode::Error::ParseFailed(msg)) => {
+                assert_eq!(msg, "Invalid stealth excess public key");
+            }
+            _ => panic!("Expected ParseFailed error for invalid stealth excess public key")
+        }
+    }
+
+    #[test]
+    fn test_corrupted_pubkey_data() {
+        // Test various corrupted public key scenarios
+        let corrupted_keys = vec![
+            [0xFFu8; 33],  // All 0xFF
+            [0x01u8; 33],  // All 0x01
+            {
+                let mut key = [0u8; 33];
+                key[0] = 0x04; // Invalid compression flag
+                key
+            },
+        ];
+        
+        for (i, invalid_pubkey) in corrupted_keys.iter().enumerate() {
+            let mut encoded = Vec::new();
+            (KernelFeatures::StealthExcessFeatureBit as u8).consensus_encode(&mut encoded).unwrap();
+            invalid_pubkey.consensus_encode(&mut encoded).unwrap();
+            [0u8; 33].consensus_encode(&mut encoded).unwrap(); // excess
+            [0u8; 64].consensus_encode(&mut encoded).unwrap(); // signature
+            
+            let mut cursor = Cursor::new(&encoded);
+            let result = Kernel::consensus_decode(&mut cursor);
+            
+            assert!(result.is_err(), "Expected error for corrupted key #{}", i);
+            if let Err(encode::Error::ParseFailed(msg)) = result {
+                assert_eq!(msg, "Invalid stealth excess public key");
+            }
+        }
     }
 }

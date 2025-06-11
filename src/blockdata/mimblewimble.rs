@@ -531,18 +531,39 @@ mod tests {
     fn test_pegout_coin_roundtrip() {
         use crate::Script;
         
-        let coin = PegOutCoin {
+        // Test with empty script
+        let coin_empty = PegOutCoin {
             amount: 50000000,
             script_pub_key: Script::new()
         };
         
         let mut encoded = Vec::new();
-        coin.consensus_encode(&mut encoded).unwrap();
+        coin_empty.consensus_encode(&mut encoded).unwrap();
         
         let mut cursor = Cursor::new(&encoded);
         let decoded = PegOutCoin::consensus_decode(&mut cursor).unwrap();
         
-        assert_eq!(coin, decoded);
+        assert_eq!(coin_empty, decoded);
+        
+        // Test with P2PKH script (more realistic)
+        let script_bytes = vec![
+            0x76, 0xa9, 0x14, // OP_DUP OP_HASH160 <20 bytes>
+            0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
+            0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            0x88, 0xac  // OP_EQUALVERIFY OP_CHECKSIG
+        ];
+        let coin_p2pkh = PegOutCoin {
+            amount: 100000000, // 1 LTC
+            script_pub_key: Script::from(script_bytes)
+        };
+        
+        let mut encoded = Vec::new();
+        coin_p2pkh.consensus_encode(&mut encoded).unwrap();
+        
+        let mut cursor = Cursor::new(&encoded);
+        let decoded = PegOutCoin::consensus_decode(&mut cursor).unwrap();
+        
+        assert_eq!(coin_p2pkh, decoded);
     }
 
     #[test]
@@ -676,25 +697,25 @@ mod tests {
     }
 
     #[test]
-    fn test_real_world_block_parsing() {
-        // Test parsing a problematic block that was causing crashes
-        // This is a subset of the hex data from the crash report
-        let _kernel_data = "020000000001026d4fb836202ec6cf2b8f1a7af0148e3830a1109a726519954edf4aa1e179ad540000000000ffffffff3e1785f12504340800386ea0109015666a57a0b5b0c2a59ed3bc29d95df2b7c60600000000ffffffff02474344190000000016001499ab86d6489b8fc94086c85f7901219ea3715d687004fd420000000016001400b111bb482c5fb0df7c18d5f13b4906ea953a2d024730440220075576e4771d663c98d87525e609b74e843b28173c2b9f1a01e616bd1b486f88022014944505117824ad964ebe04b5e688c7fe152d4222da9957694ce92fdb06215901210266203d3217038ef2e64705ca1748b021443b343b1e723c0b363ad610129801a10248304502210098bf07fe2fdeb3a2ca7eedba127263e3c5c725ec74b55a4dd5d78c4d8749767402207ad2252e1c685eaeec19f713645b57dbc85d7a60f70bcf3fe7148c7e77007ad5012102ff1101c993a88b74b092aa00ad5cd3bfc2dafc99b35e719d605df48b4b56358600000000";
-        
-        // Test that we can parse amounts from this block without crashing
-        let test_amounts = vec![
-            0x47434419i64,  // Amount from the block
-            0x7004fd42i64,  // Another amount from the block
+    fn test_amount_edge_cases() {
+        // Test specific amounts that were found in problematic real-world blocks
+        let edge_case_amounts = vec![
+            0x47434419i64,  // 1195656217 - from real block transaction
+            0x7004fd42i64,  // 1879391554 - from real block transaction  
+            0x7Fi64,        // Boundary: largest 7-bit value
+            0x80i64,        // Boundary: smallest 2-byte encoded value
+            0x3FFFi64,      // Boundary: largest 14-bit value
+            0x4000i64,      // Boundary: smallest 3-byte encoded value
         ];
         
-        for amount in test_amounts {
+        for amount in edge_case_amounts {
             let mut encoded = Vec::new();
             write_amount(amount, &mut encoded).unwrap();
             
             let mut cursor = Cursor::new(&encoded);
             let decoded = read_amount(&mut cursor).unwrap();
             
-            assert_eq!(amount, decoded, "Real-world amount encoding failed for {}", amount);
+            assert_eq!(amount, decoded, "Edge case amount encoding failed for {}", amount);
         }
     }
 
@@ -762,5 +783,31 @@ mod tests {
                 assert_eq!(msg, "Invalid stealth excess public key");
             }
         }
+    }
+
+    #[test]
+    fn test_input_output_pubkey_validation() {
+        // Test Input with invalid output public key
+        let invalid_key = [0u8; 33];
+        let mut encoded = Vec::new();
+        0u8.consensus_encode(&mut encoded).unwrap(); // features
+        [0u8; 32].consensus_encode(&mut encoded).unwrap(); // output_id
+        [0u8; 33].consensus_encode(&mut encoded).unwrap(); // commitment
+        invalid_key.consensus_encode(&mut encoded).unwrap(); // invalid output public key
+        [0u8; 64].consensus_encode(&mut encoded).unwrap(); // signature
+
+        let mut cursor = Cursor::new(&encoded);
+        let result = Input::consensus_decode(&mut cursor);
+        assert!(result.is_err(), "Expected error for invalid output public key in Input");
+        
+        // Test Output with invalid sender public key
+        let mut encoded = Vec::new();
+        [0u8; 33].consensus_encode(&mut encoded).unwrap(); // commitment
+        invalid_key.consensus_encode(&mut encoded).unwrap(); // invalid sender public key
+        
+        let mut cursor = Cursor::new(&encoded);
+        // This will fail at sender key parsing, which is what we want
+        let result = Output::consensus_decode(&mut cursor);
+        assert!(result.is_err(), "Expected error for invalid sender public key in Output");
     }
 }

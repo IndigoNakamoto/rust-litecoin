@@ -141,8 +141,8 @@ fn write_amount<W: io::Write>(amount: i64, mut writer: W) -> Result<usize, io::E
         n = (n >> 7) - 1;
         len += 1;
     };
-    for _ in 0 .. len {
-        let _ = u8::consensus_encode(&tmp[len], &mut writer);
+    for i in (0..=len).rev() {
+        let _ = u8::consensus_encode(&tmp[i], &mut writer);
     };
     Ok(len)
 }
@@ -194,7 +194,7 @@ impl Decodable for Kernel {
         }
         let lock_height =
             if features & (KernelFeatures::HeightLockFeatureBit as u8) != 0 {
-                Some(i32::consensus_decode(&mut d)?)
+                Some(read_amount(&mut d)? as i32)
             }
             else {
                 None
@@ -237,16 +237,16 @@ impl Encodable for Kernel {
             len += write_amount(self.fee.unwrap(), &mut writer)?;
         }
         if self.features & (KernelFeatures::PeginFeatureBit as u8) != 0 {
-            len += self.pegin.unwrap().consensus_encode(&mut writer)?;
+            len += write_amount(self.pegin.unwrap(), &mut writer)?;
         }
         if self.features & (KernelFeatures::PegoutFeatureBit as u8) != 0 {
             len += VarInt(self.pegouts.len() as u64).consensus_encode(&mut writer)?;
             for pegout in &self.pegouts {
-                pegout.consensus_encode(&mut writer)?;
+                len += pegout.consensus_encode(&mut writer)?;
             }
         }
         if self.features & (KernelFeatures::HeightLockFeatureBit as u8) != 0 {
-            len += self.lock_height.unwrap().consensus_encode(&mut writer)?;
+            len += write_amount(self.lock_height.unwrap() as i64, &mut writer)?;
         }
         if self.features & (KernelFeatures::StealthExcessFeatureBit as u8) != 0 {
             len += self.stealth_excess.unwrap().serialize().consensus_encode(&mut writer)?;

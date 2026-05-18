@@ -1,51 +1,50 @@
 <div align="center">
-  <h1>Rust Bitcoin</h1>
-
-  <img alt="Rust Bitcoin logo by Hunter Trujillo, see license and source files under /logo" src="./logo/rust-bitcoin.png" width="300" />
+  <h1>Rust Litecoin</h1>
 
   <p>Library with support for de/serialization, parsing and executing on data-structures
-    and network messages related to Bitcoin.
+    and network messages related to Litecoin, including the MimbleWimble Extension Block (MWEB).
+  </p>
+
+  <p>Forked from <a href="https://github.com/rust-bitcoin/rust-bitcoin">rust-bitcoin</a>;
+    chain parameters, address formats, MWEB wire types and HogEx transaction handling are
+    Litecoin-specific. The crate name and module paths are preserved to make it easy to swap
+    rust-bitcoin for rust-litecoin via a single Cargo patch.
   </p>
 
   <p>
-    <a href="https://crates.io/crates/bitcoin"><img alt="Crate Info" src="https://img.shields.io/crates/v/bitcoin.svg"/></a>
-    <a href="https://github.com/rust-bitcoin/rust-bitcoin/blob/master/LICENSE"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
-    <a href="https://github.com/rust-bitcoin/rust-bitcoin/actions?query=workflow%3AContinuous%20integration"><img alt="CI Status" src="https://github.com/rust-bitcoin/rust-bitcoin/workflows/Continuous%20integration/badge.svg"></a>
-    <a href="https://docs.rs/bitcoin"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-bitcoin-green"/></a>
+    <a href="https://github.com/rust-litecoin/rust-litecoin/blob/ltc/LICENSE"><img alt="CC0 1.0 Universal Licensed" src="https://img.shields.io/badge/license-CC0--1.0-blue.svg"/></a>
     <a href="https://blog.rust-lang.org/2021/11/01/Rust-1.56.1.html"><img alt="Rustc Version 1.56.1+" src="https://img.shields.io/badge/rustc-1.56.1%2B-lightgrey.svg"/></a>
-    <a href="https://gnusha.org/bitcoin-rust/"><img alt="Chat on IRC" src="https://img.shields.io/badge/irc-%23bitcoin--rust%20on%20libera.chat-blue"></a>
-    <a href="https://github.com/model-checking/kani"><imp alt="kani" src="https://github.com/rust-bitcoin/rust-bitcoin/actions/workflows/kani.yaml/badge.svg"></a>
   </p>
 </div>
 
-[Documentation](https://docs.rs/bitcoin/)
-
 Supports (or should support)
 
-* De/serialization of Bitcoin protocol network messages
-* De/serialization of blocks and transactions
+* De/serialization of Litecoin protocol network messages (magic bytes `0xFBC0B6DB` mainnet,
+  `0xFDD2C8F1` testnet4)
+* De/serialization of blocks and transactions, including MWEB extension blocks and HogEx
+  bridge transactions (segwit flag bits `0x01`, `0x08`, `0x09`)
+* MimbleWimble wire types — kernels, outputs, inputs, peg-in / peg-out coins, compact varints
 * Script de/serialization
-* Private keys and address creation, de/serialization and validation (including full BIP32 support)
-* PSBT v0 de/serialization and all but the Input Finalizer role. Use [rust-miniscript](https://docs.rs/miniscript/latest/miniscript/psbt/index.html) to finalize.
-
-For JSONRPC interaction with Bitcoin Core, it is recommended to use
-[rust-bitcoincore-rpc](https://github.com/rust-bitcoin/rust-bitcoincore-rpc).
-
-It is recommended to always use [cargo-crev](https://github.com/crev-dev/cargo-crev) to verify the
-trustworthiness of each of your dependencies, including this one.
+* Litecoin address formats — legacy P2PKH (`L…` / `m…`), P2SH (`M…` / `Q…` / `2…`), segwit
+  v0–v16 bech32/bech32m with `ltc` / `tltc` / `rltc` HRPs, and MWEB stealth addresses
+  (`ltcmweb` / `tmweb`)
+* Private keys (WIF prefix `0xB0` mainnet / `0xEF` testnet) and BIP32 derivation
+* Litecoin signed-message prefix (`\x19Litecoin Signed Message:\n`)
+* PSBT v0 de/serialization and all but the Input Finalizer role; PSBT explicitly rejects
+  Transactions carrying MWEB data, since BIP-174 has no field to round-trip it
 
 ## Known limitations
 
 ### Consensus
 
 This library **must not** be used for consensus code (i.e. fully validating blockchain data). It
-technically supports doing this, but doing so is very ill-advised because there are many deviations,
-known and unknown, between this library and the Bitcoin Core reference implementation. In a
-consensus based cryptocurrency such as Bitcoin it is critical that all parties are using the same
-rules to validate data, and this library is simply unable to implement the same rules as Core.
+technically supports parsing and re-serializing real Litecoin mainnet blocks (including those
+containing MWEB extensions and the regression block `#2,644,351`), but full validation requires
+matching Litecoin Core bit-for-bit — which this library does not attempt.
 
-Given the complexity of both C++ and Rust, it is unlikely that this will ever be fixed, and there
-are no plans to do so. Of course, patches to fix specific consensus incompatibilities are welcome.
+In a consensus based cryptocurrency it is critical that all parties are using the same rules
+to validate data, and this library is simply unable to implement the same rules as Core. Of
+course, patches to fix specific consensus incompatibilities are welcome.
 
 ### Support for 16-bit pointer sizes
 
@@ -54,16 +53,14 @@ please let us know, so we can know how large the interest is and possibly decide
 
 ## Documentation
 
-Currently can be found on [docs.rs/bitcoin](https://docs.rs/bitcoin/). Patches to add usage examples
-and to expand on existing docs would be extremely appreciated.
+API docs follow upstream rust-bitcoin's structure under the `bitcoin::*` namespace. Most
+Bitcoin-named types map directly onto Litecoin equivalents; the MWEB-specific surface lives in
+`bitcoin::blockdata::mimblewimble` and on the `Block` / `Transaction` extension fields.
 
 ## Contributing
 
-Contributions are generally welcome. If you intend to make larger changes please discuss them in an
-issue before PRing them to avoid duplicate work and architectural mismatches. If you have any
-questions or ideas you want to discuss please join us in
-[#bitcoin-rust](https://web.libera.chat/?channel=#bitcoin-rust) on
-[libera.chat](https://libera.chat).
+Contributions are generally welcome. If you intend to make larger changes please discuss them in
+an issue before PRing them to avoid duplicate work and architectural mismatches.
 
 For more information please see `./CONTRIBUTING.md`.
 
@@ -92,8 +89,8 @@ review them.
 Rust can be installed using your package manager of choice or [rustup.rs](https://rustup.rs). The
 former way is considered more secure since it typically doesn't involve trust in the CA system. But
 you should be aware that the version of Rust shipped by your distribution might be out of date.
-Generally this isn't a problem for `rust-bitcoin` since we support much older versions than the
-current stable one (see MSRV section).
+Generally this isn't a problem since we follow upstream rust-bitcoin's MSRV — much older than
+the current stable Rust (see MSRV section).
 
 ## Building
 
@@ -107,8 +104,8 @@ be usable without `std`. Both can be enabled without conflict.
 The library can be built and tested using [`cargo`](https://github.com/rust-lang/cargo/):
 
 ```
-git clone git@github.com:rust-bitcoin/rust-bitcoin.git
-cd rust-bitcoin
+git clone git@github.com:rust-litecoin/rust-litecoin.git
+cd rust-litecoin
 cargo build
 ```
 
@@ -195,14 +192,16 @@ git config --local core.hooksPath githooks/
 
 Alternatively add symlinks in your `.git/hooks` directory to any of the githooks we provide.
 
-## Policy on Altcoins/Altchains
+## Relationship to upstream rust-bitcoin
 
-Since the altcoin landscape includes projects which [frequently appear and disappear, and are poorly
-designed anyway](https://download.wpsoftware.net/bitcoin/alts.pdf) we do not support any altcoins.
-Supporting Bitcoin properly is already difficult enough and we do not want to increase the
-maintenance burden and decrease API stability by adding support for other coins.
+This is a fork. We pull from `rust-bitcoin/rust-bitcoin` periodically and re-apply the
+Litecoin-specific layer on top — chain identity, MWEB wire types, HogEx handling, LTC address
+HRPs, magic bytes, genesis, WIF prefix, signed-message prefix. The crate name stays `bitcoin`
+to keep `[patch.crates-io.bitcoin]` workable as the integration path for downstream wallets
+already on rust-bitcoin.
 
-Our code is public domain so by all means fork it and go wild :)
+Bug reports about the Litecoin layer belong here; bug reports about Bitcoin-shared code should
+generally be filed upstream first.
 
 
 ## Release Notes

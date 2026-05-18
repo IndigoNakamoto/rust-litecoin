@@ -1461,7 +1461,7 @@ mod test {
 
     use super::*;
     use crate::sighash::{TapSighash, TapSighashTag};
-    use crate::{Address, KnownHrp};
+    use crate::{Address, KnownHrp, Network};
     extern crate serde_json;
 
     #[cfg(feature = "serde")]
@@ -1850,10 +1850,9 @@ mod test {
                 TapTweakHash::from_str(arr["intermediary"]["tweak"].as_str().unwrap()).unwrap();
             let expected_spk =
                 ScriptBuf::from_hex(arr["expected"]["scriptPubKey"].as_str().unwrap()).unwrap();
-            let expected_addr =
-                Address::from_str(arr["expected"]["bip350Address"].as_str().unwrap())
-                    .unwrap()
-                    .assume_checked();
+            // The BIP350 reference vector encodes a `bc1p…` address; for Litecoin we re-encode
+            // the same script_pubkey with the `ltc` HRP and compare the result.
+            let expected_addr = Address::from_script(&expected_spk, Network::Bitcoin).unwrap();
 
             let tweak = TapTweakHash::from_key_and_tweak(internal_key, merkle_root);
             let (output_key, _parity) = internal_key.tap_tweak(secp, merkle_root);

@@ -70,13 +70,17 @@ fn psbt_sign_taproot() {
 
     let address = create_p2tr_address(tree.clone());
     assert_eq!(
-        "tb1pytee2mxz0f4fkrsqqws2lsgnkp8nrw2atjkjy2n9gahggsphr0gszaxxmv",
+        "tltc1pytee2mxz0f4fkrsqqws2lsgnkp8nrw2atjkjy2n9gahggsphr0gsa768yn",
         address.to_string()
     );
 
-    // m/86'/1'/0'/0/7
-    let to_address = "tb1pyfv094rr0vk28lf8v9yx3veaacdzg26ztqk4ga84zucqqhafnn5q9my9rz";
-    let to_address = Address::from_str(to_address).unwrap().assume_checked();
+    // m/86'/1'/0'/0/7 — derived as the Litecoin testnet P2TR address for the same witness program
+    // (`2258f2d4637b2ca3fd27614868b33dee1a242b42582d5474f51730005fa99ce8`).
+    let to_spk = ScriptBuf::from_hex(
+        "51202258f2d4637b2ca3fd27614868b33dee1a242b42582d5474f51730005fa99ce8",
+    )
+    .unwrap();
+    let to_address = Address::from_script(&to_spk, Network::Testnet4).unwrap();
 
     // key path spend
     {
@@ -94,7 +98,7 @@ fn psbt_sign_taproot() {
         //
         let keystore = Keystore {
             mfp: Fingerprint::from_str(mfp).unwrap(),
-            sk: PrivateKey::new(kp.secret_key(), Network::Testnet),
+            sk: PrivateKey::new(kp.secret_key(), Network::Testnet4),
         };
         let _ = psbt_key_path_spend.sign(&keystore, secp);
 
@@ -124,7 +128,7 @@ fn psbt_sign_taproot() {
 
         let keystore = Keystore {
             mfp: Fingerprint::from_str(mfp).unwrap(),
-            sk: PrivateKey::new(kp.secret_key(), Network::Testnet),
+            sk: PrivateKey::new(kp.secret_key(), Network::Testnet4),
         };
 
         //
@@ -195,7 +199,7 @@ fn create_taproot_tree(
 
 fn create_p2tr_address(tree: TaprootSpendInfo) -> Address {
     let output_key = tree.output_key();
-    Address::p2tr_tweaked(output_key, Network::Testnet)
+    Address::p2tr_tweaked(output_key, Network::Testnet4)
 }
 
 fn create_psbt_for_taproot_key_path_spend(
@@ -220,6 +224,8 @@ fn create_psbt_for_taproot_key_path_spend(
             witness: Witness::default(),
         }],
         output: out_puts,
+        mw_tx: None,
+        is_hog_ex: false,
     };
 
     let mut psbt = Psbt::from_unsigned_tx(transaction).unwrap();
@@ -297,6 +303,8 @@ fn create_psbt_for_taproot_script_path_spend(
             witness: Witness::default(),
         }],
         output: out_puts,
+        mw_tx: None,
+        is_hog_ex: false,
     };
 
     let mut psbt = Psbt::from_unsigned_tx(transaction).unwrap();

@@ -22,6 +22,7 @@ use units::parse::{self, ParseIntError};
 use super::Weight;
 use crate::blockdata::locktime::absolute::{self, Height, Time};
 use crate::blockdata::locktime::relative::{self, TimeOverflowError};
+use crate::blockdata::mimblewimble;
 use crate::blockdata::script::{Script, ScriptBuf};
 use crate::blockdata::witness::Witness;
 use crate::blockdata::FeeRate;
@@ -55,8 +56,13 @@ impl_hashencode!(Wtxid);
 
 /// The marker MUST be a 1-byte zero value: 0x00. (BIP-141)
 const SEGWIT_MARKER: u8 = 0x00;
-/// The flag MUST be a 1-byte non-zero value. Currently, 0x01 MUST be used. (BIP-141)
-const SEGWIT_FLAG: u8 = 0x01;
+
+/// Bitmask: BIP-144 segwit witnesses are present.
+const FLAGS_SEGWIT: u8 = 0x01;
+/// Bitmask: Litecoin MWEB transaction body follows the outputs.
+///
+/// In practice the serialized flag byte is `1`, `8`, or `9`.
+const FLAGS_MWEB_TX: u8 = 0x08;
 
 /// A reference to a transaction output.
 ///
@@ -707,6 +713,21 @@ pub struct Transaction {
     pub input: Vec<TxIn>,
     /// List of transaction outputs.
     pub output: Vec<TxOut>,
+    /// MimbleWimble (MWEB) transaction body, if any.
+    ///
+    /// Present when the transaction was serialized with segwit flag bit `0x08` set and the
+    /// `is_mw_tx_present` byte was `1`. `None` for non-MWEB transactions and for HogEx
+    /// transactions (where the flag is set but the body is absent).
+    ///
+    /// Skipped under serde: MWEB is the canonical wire format only, and the embedded byte arrays
+    /// (signatures, range proofs) are not serde-representable as humans-readable JSON.
+    #[cfg_attr(feature = "serde", serde(skip, default))]
+    pub mw_tx: Option<mimblewimble::Transaction>,
+    /// `true` when the transaction was serialized as a "HogEx" (Hogwarts Express) bridge
+    /// transaction — segwit flag bit `0x08` set with `is_mw_tx_present == 0`. These mark a
+    /// regular Litecoin transaction whose outputs cross into the MWEB extension block.
+    #[cfg_attr(feature = "serde", serde(skip, default))]
+    pub is_hog_ex: bool,
 }
 
 impl cmp::PartialOrd for Transaction {
@@ -719,6 +740,8 @@ impl cmp::Ord for Transaction {
             .then(self.lock_time.to_consensus_u32().cmp(&other.lock_time.to_consensus_u32()))
             .then(self.input.cmp(&other.input))
             .then(self.output.cmp(&other.output))
+            .then(self.mw_tx.cmp(&other.mw_tx))
+            .then(self.is_hog_ex.cmp(&other.is_hog_ex))
     }
 }
 
@@ -755,6 +778,8 @@ impl Transaction {
                 })
                 .collect(),
             output: self.output.clone(),
+            mw_tx: None,
+            is_hog_ex: false,
         };
         cloned_tx.compute_txid().into()
     }
@@ -1238,18 +1263,45 @@ impl Encodable for Transaction {
         let mut len = 0;
         len += self.version.consensus_encode(w)?;
 
-        // Legacy transaction serialization format only includes inputs and outputs.
-        if !self.uses_segwit_serialization() {
+        let has_witnesses = self.input.iter().any(|i| !i.witness.is_empty());
+        let has_mweb = self.mw_tx.is_some() || self.is_hog_ex;
+        // BIP-141's "empty-input → segwit flag" disambiguation only kicks in when there's no
+        // other extension flag in play; an MWEB tx with no inputs is already unambiguous.
+        let needs_segwit_disambiguation = self.input.is_empty() && !has_mweb;
+        let segwit_required = has_witnesses || needs_segwit_disambiguation;
+
+        if !segwit_required && !has_mweb {
             len += self.input.consensus_encode(w)?;
             len += self.output.consensus_encode(w)?;
         } else {
-            // BIP-141 (segwit) transaction serialization also includes marker, flag, and witness data.
+            // BIP-141 marker + Litecoin-extended flag byte. Bits: 0x01 = segwit, 0x08 = MWEB.
             len += SEGWIT_MARKER.consensus_encode(w)?;
-            len += SEGWIT_FLAG.consensus_encode(w)?;
+            let mut flag: u8 = 0;
+            if segwit_required {
+                flag |= FLAGS_SEGWIT;
+            }
+            if has_mweb {
+                flag |= FLAGS_MWEB_TX;
+            }
+            len += flag.consensus_encode(w)?;
             len += self.input.consensus_encode(w)?;
             len += self.output.consensus_encode(w)?;
-            for input in &self.input {
-                len += input.witness.consensus_encode(w)?;
+            if segwit_required {
+                for input in &self.input {
+                    len += input.witness.consensus_encode(w)?;
+                }
+            }
+            if has_mweb {
+                match &self.mw_tx {
+                    Some(mw) => {
+                        len += 1u8.consensus_encode(w)?;
+                        len += mw.consensus_encode(w)?;
+                    }
+                    None => {
+                        // HogEx: flag bit set but no embedded MW body.
+                        len += 0u8.consensus_encode(w)?;
+                    }
+                }
             }
         }
         len += self.lock_time.consensus_encode(w)?;
@@ -1263,31 +1315,58 @@ impl Decodable for Transaction {
     ) -> Result<Self, encode::Error> {
         let version = Version::consensus_decode_from_finite_reader(r)?;
         let input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
-        // segwit
+        // segwit / mweb
         if input.is_empty() {
             let segwit_flag = u8::consensus_decode_from_finite_reader(r)?;
-            match segwit_flag {
-                // BIP144 input witnesses
-                1 => {
-                    let mut input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
-                    let output = Vec::<TxOut>::consensus_decode_from_finite_reader(r)?;
-                    for txin in input.iter_mut() {
-                        txin.witness = Decodable::consensus_decode_from_finite_reader(r)?;
-                    }
-                    if !input.is_empty() && input.iter().all(|input| input.witness.is_empty()) {
-                        Err(encode::Error::ParseFailed("witness flag set but no witnesses present"))
-                    } else {
-                        Ok(Transaction {
-                            version,
-                            input,
-                            output,
-                            lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
-                        })
-                    }
-                }
-                // We don't support anything else
-                x => Err(encode::Error::UnsupportedSegwitFlag(x)),
+            // Litecoin accepts any combination of BIP-144 segwit (`0x01`) and MWEB (`0x08`):
+            //   1 = BIP-144 witnesses only,
+            //   8 = MWEB / HogEx only,
+            //   9 = both.
+            if segwit_flag & (FLAGS_SEGWIT | FLAGS_MWEB_TX) != segwit_flag || segwit_flag == 0 {
+                return Err(encode::Error::UnsupportedSegwitFlag(segwit_flag));
             }
+
+            let mut input = Vec::<TxIn>::consensus_decode_from_finite_reader(r)?;
+            let output = Vec::<TxOut>::consensus_decode_from_finite_reader(r)?;
+
+            if segwit_flag & FLAGS_SEGWIT != 0 {
+                for txin in input.iter_mut() {
+                    txin.witness = Decodable::consensus_decode_from_finite_reader(r)?;
+                }
+                if !input.is_empty() && input.iter().all(|i| i.witness.is_empty()) {
+                    return Err(encode::Error::ParseFailed(
+                        "witness flag set but no witnesses present",
+                    ));
+                }
+            }
+
+            let mut mw_tx: Option<mimblewimble::Transaction> = None;
+            let mut is_hog_ex = false;
+            if segwit_flag & FLAGS_MWEB_TX != 0 {
+                let is_mw_tx_present = u8::consensus_decode_from_finite_reader(r)?;
+                if is_mw_tx_present != 0 {
+                    mw_tx = Some(mimblewimble::Transaction::consensus_decode_from_finite_reader(r)?);
+                } else {
+                    // HogEx: flag bit set, no embedded MW body. Litecoin Core's
+                    // `CTransaction::IsHogEx()` requires at least one output (the bridge tx
+                    // funds the MWEB peg-in / peg-out via vout entries).
+                    if output.is_empty() {
+                        return Err(encode::Error::ParseFailed(
+                            "HogEx transaction must have at least one output",
+                        ));
+                    }
+                    is_hog_ex = true;
+                }
+            }
+
+            Ok(Transaction {
+                version,
+                input,
+                output,
+                lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
+                mw_tx,
+                is_hog_ex,
+            })
         // non-segwit
         } else {
             Ok(Transaction {
@@ -1295,6 +1374,8 @@ impl Decodable for Transaction {
                 input,
                 output: Decodable::consensus_decode_from_finite_reader(r)?,
                 lock_time: Decodable::consensus_decode_from_finite_reader(r)?,
+                mw_tx: None,
+                is_hog_ex: false,
             })
         }
     }
@@ -2233,6 +2314,8 @@ mod tests {
             lock_time: absolute::LockTime::ZERO,
             input: vec![],
             output: vec![],
+            mw_tx: None,
+            is_hog_ex: false,
         }
         .weight();
 

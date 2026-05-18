@@ -242,6 +242,8 @@ fn serde_regression_psbt() {
             script_pubkey: ScriptBuf::from_hex("a914339725ba21efd62ac753a9bcd067d6c7a6a39d0587")
                 .unwrap(),
         }],
+        mw_tx: None,
+        is_hog_ex: false,
     };
     let unknown: BTreeMap<raw::Key, Vec<u8>> =
         vec![(raw::Key { type_value: 9, key: vec![0, 1] }, vec![3, 4, 5])].into_iter().collect();

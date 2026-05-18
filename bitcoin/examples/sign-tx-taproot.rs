@@ -55,6 +55,8 @@ fn main() {
         lock_time: absolute::LockTime::ZERO, // Ignore the locktime.
         input: vec![input],                  // Input goes into index 0.
         output: vec![spend, change],         // Outputs, order does not matter.
+        mw_tx: None,
+        is_hog_ex: false,
     };
     let input_index = 0;
 

@@ -238,6 +238,8 @@ fn generate_bip86_key_spend_tx(
             witness: Witness::default(),
         }],
         output: outputs,
+        mw_tx: None,
+        is_hog_ex: false,
     };
     let mut psbt = Psbt::from_unsigned_tx(tx1)?;
 
@@ -430,6 +432,8 @@ impl BenefactorWallet {
                 witness: Witness::default(),
             }],
             output: vec![],
+            mw_tx: None,
+            is_hog_ex: false,
         };
         let mut next_psbt = Psbt::from_unsigned_tx(next_tx)?;
         let mut origins = BTreeMap::new();
@@ -573,6 +577,8 @@ impl BenefactorWallet {
                     witness: Witness::default(),
                 }],
                 output: vec![],
+                mw_tx: None,
+                is_hog_ex: false,
             };
             let mut next_psbt = Psbt::from_unsigned_tx(next_tx)?;
             let mut origins = BTreeMap::new();

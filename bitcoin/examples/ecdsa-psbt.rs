@@ -192,6 +192,8 @@ impl WatchOnly {
                 TxOut { value: to_amount, script_pubkey: to_address.script_pubkey() },
                 TxOut { value: change_amount, script_pubkey: change_address.script_pubkey() },
             ],
+            mw_tx: None,
+            is_hog_ex: false,
         };
 
         let psbt = Psbt::from_unsigned_tx(tx)?;

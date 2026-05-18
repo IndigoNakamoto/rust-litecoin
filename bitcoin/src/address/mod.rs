@@ -76,6 +76,8 @@ pub enum AddressType {
     P2tr,
     /// Pay to anchor.
     P2a,
+    /// Litecoin MimbleWimble stealth address (`ltcmweb1…` / `tmweb1…`).
+    Mweb,
 }
 
 impl fmt::Display for AddressType {
@@ -87,6 +89,7 @@ impl fmt::Display for AddressType {
             AddressType::P2wsh => "p2wsh",
             AddressType::P2tr => "p2tr",
             AddressType::P2a => "p2a",
+            AddressType::Mweb => "mweb",
         })
     }
 }
@@ -101,6 +104,7 @@ impl FromStr for AddressType {
             "p2wsh" => Ok(AddressType::P2wsh),
             "p2tr" => Ok(AddressType::P2tr),
             "p2a" => Ok(AddressType::P2a),
+            "mweb" => Ok(AddressType::Mweb),
             _ => Err(UnknownAddressTypeError(s.to_owned())),
         }
     }
@@ -145,6 +149,9 @@ enum AddressInner {
     P2pkh { hash: PubkeyHash, network: NetworkKind },
     P2sh { hash: ScriptHash, network: NetworkKind },
     Segwit { program: WitnessProgram, hrp: KnownHrp },
+    /// Litecoin MWEB stealth address: 33-byte scan key followed by 33-byte spend key,
+    /// bech32-encoded under the per-network MWEB HRP.
+    Mweb { scan: [u8; 33], spend: [u8; 33], network: NetworkKind },
 }
 
 /// Formats bech32 as upper case if alternate formatting is chosen (`{:#}`).
@@ -172,17 +179,203 @@ impl fmt::Display for AddressInner {
             }
             Segwit { program, hrp } => {
                 let hrp = hrp.to_hrp();
-                let version = program.version().to_fe();
+                let version = program.version();
                 let program = program.program().as_ref();
 
                 if fmt.alternate() {
-                    bech32::segwit::encode_upper_to_fmt_unchecked(fmt, hrp, version, program)
+                    litecoin_segwit_encode_upper(fmt, hrp, version, program)
                 } else {
-                    bech32::segwit::encode_lower_to_fmt_unchecked(fmt, hrp, version, program)
+                    litecoin_segwit_encode_lower(fmt, hrp, version, program)
                 }
+            }
+            Mweb { scan, spend, network } => {
+                // ltcsuite (`ltcd/ltcutil/address.go:EncodeAddress`) prepends a version fe (0)
+                // to the bech32 data: `bech32.Encode(hrp, append([]byte{0}, converted...))`.
+                // We mirror that by chaining a leading `Fe32::Q` (value 0) into the bech32
+                // encoder via `with_witness_version`, which is exactly what the segwit helper
+                // does for v0/v1+ addresses.
+                use bech32::{Bech32, ByteIterExt, Fe32, Fe32IterExt};
+                use core::fmt::Write;
+                let mut payload = [0u8; 66];
+                payload[..33].copy_from_slice(scan);
+                payload[33..].copy_from_slice(spend);
+                let hrp = mweb_hrp_for(*network);
+                let iter = payload.iter().copied().bytes_to_fes();
+                let bytes = iter
+                    .with_checksum::<Bech32>(&hrp)
+                    .with_witness_version(Fe32::Q)
+                    .bytes();
+                if fmt.alternate() {
+                    for b in bytes {
+                        Write::write_char(fmt, (b as char).to_ascii_uppercase())?;
+                    }
+                } else {
+                    for b in bytes {
+                        Write::write_char(fmt, b as char)?;
+                    }
+                }
+                Ok(())
             }
         }
     }
+}
+
+/// Litecoin witness-version → bech32 variant rule.
+///
+/// Bitcoin (BIP-350) uses bech32 only for witness V0 and bech32m for V1+. Litecoin's HogEx
+/// uses witness version 8 and MWEB peg-in scripts use version 9; both use the original bech32
+/// checksum, *not* bech32m. See <https://github.com/rust-litecoin/rust-litecoin/issues/4>.
+fn litecoin_uses_bech32(version: WitnessVersion) -> bool {
+    matches!(version, WitnessVersion::V0 | WitnessVersion::V8 | WitnessVersion::V9)
+}
+
+/// Lower-case segwit encoder using Litecoin's V0/V8/V9-bech32 / V1+(except 8,9)-bech32m rule.
+fn litecoin_segwit_encode_lower<W: fmt::Write>(
+    fmt: &mut W,
+    hrp: Hrp,
+    version: WitnessVersion,
+    program: &[u8],
+) -> fmt::Result {
+    use bech32::{Bech32, Bech32m, ByteIterExt, Fe32IterExt};
+    let iter = program.iter().copied().bytes_to_fes();
+    if litecoin_uses_bech32(version) {
+        let bytes = iter
+            .with_checksum::<Bech32>(&hrp)
+            .with_witness_version(version.to_fe())
+            .bytes();
+        for b in bytes {
+            fmt.write_char(b as char)?;
+        }
+    } else {
+        let bytes = iter
+            .with_checksum::<Bech32m>(&hrp)
+            .with_witness_version(version.to_fe())
+            .bytes();
+        for b in bytes {
+            fmt.write_char(b as char)?;
+        }
+    }
+    Ok(())
+}
+
+/// Upper-case segwit encoder (BIP-173 QR-friendly form).
+fn litecoin_segwit_encode_upper<W: fmt::Write>(
+    fmt: &mut W,
+    hrp: Hrp,
+    version: WitnessVersion,
+    program: &[u8],
+) -> fmt::Result {
+    use bech32::{Bech32, Bech32m, ByteIterExt, Fe32IterExt};
+    let iter = program.iter().copied().bytes_to_fes();
+    if litecoin_uses_bech32(version) {
+        let bytes = iter
+            .with_checksum::<Bech32>(&hrp)
+            .with_witness_version(version.to_fe())
+            .bytes();
+        for b in bytes {
+            fmt.write_char((b as char).to_ascii_uppercase())?;
+        }
+    } else {
+        let bytes = iter
+            .with_checksum::<Bech32m>(&hrp)
+            .with_witness_version(version.to_fe())
+            .bytes();
+        for b in bytes {
+            fmt.write_char((b as char).to_ascii_uppercase())?;
+        }
+    }
+    Ok(())
+}
+
+/// Decode a Litecoin MWEB stealth address (`ltcmweb1…` / `tmweb1…`).
+///
+/// Returns `(scan, spend, network)` on success. Wire format (per ltcsuite
+/// `ltcd/ltcutil/address.go:EncodeAddress` and Litecoin Core `mw::StealthAddress::Encode`):
+///   * bech32 (NOT bech32m) checksum over the per-network MWEB HRP
+///   * 1-fe5 leading version field (always `0` today)
+///   * 66 bytes of payload encoded as 5-bit groups: 33-byte scan pubkey || 33-byte spend pubkey
+///   * 6-fe5 checksum
+///
+/// Both halves are validated as compressed secp256k1 public keys.
+fn litecoin_mweb_decode(s: &str) -> Option<([u8; 33], [u8; 33], NetworkKind)> {
+    use bech32::primitives::decode::UncheckedHrpstring;
+    use bech32::{Bech32, Fe32IterExt};
+
+    let unchecked = UncheckedHrpstring::new(s).ok()?;
+    let hrp = unchecked.hrp();
+    let network = if hrp == HRP_LTCMWEB {
+        NetworkKind::Main
+    } else if hrp == HRP_TMWEB {
+        NetworkKind::Test
+    } else {
+        return None;
+    };
+
+    if !unchecked.has_valid_checksum::<Bech32>() {
+        return None;
+    }
+    let checked = UncheckedHrpstring::new(s).ok()?.remove_checksum::<Bech32>();
+    let mut fe_iter = checked.fe32_iter::<core::iter::Empty<u8>>();
+    // First fe is the version byte (must be 0 today, matching ltcsuite/LTC Core).
+    let version = fe_iter.next()?;
+    if version.to_u8() != 0 {
+        return None;
+    }
+    let bytes: Vec<u8> = fe_iter.fes_to_bytes().collect();
+    if bytes.len() != 66 {
+        return None;
+    }
+    let mut scan = [0u8; 33];
+    let mut spend = [0u8; 33];
+    scan.copy_from_slice(&bytes[..33]);
+    spend.copy_from_slice(&bytes[33..]);
+    // Reject addresses whose halves don't parse as compressed secp256k1 pubkeys — matches
+    // ltcsuite's `secp256k1.ParsePubKey` calls in `decodeAddressMweb`.
+    secp256k1::PublicKey::from_slice(&scan).ok()?;
+    secp256k1::PublicKey::from_slice(&spend).ok()?;
+    Some((scan, spend, network))
+}
+
+/// Try-both-checksum segwit decoder. We can't use `bech32::segwit::decode` because it always
+/// expects bech32m for V1+, but LTC mandates bech32 for V8/V9. Validate against each checksum
+/// type and apply the Litecoin variant rule explicitly.
+fn litecoin_segwit_decode(s: &str) -> Option<(Hrp, WitnessVersion, Vec<u8>)> {
+    use bech32::primitives::decode::UncheckedHrpstring;
+    use bech32::{Bech32, Bech32m};
+
+    // Determine which checksum the string passes (if any) and extract bytes.
+    let unchecked = UncheckedHrpstring::new(s).ok()?;
+    let hrp = unchecked.hrp();
+    let valid_bech32 = unchecked.has_valid_checksum::<Bech32>();
+    let valid_bech32m = unchecked.has_valid_checksum::<Bech32m>();
+    if !valid_bech32 && !valid_bech32m {
+        return None;
+    }
+
+    // Strip the appropriate checksum and walk the fe32 stream: first symbol is the witness
+    // version, the rest convert back to bytes.
+    let checked = if valid_bech32 {
+        UncheckedHrpstring::new(s).ok()?.remove_checksum::<Bech32>()
+    } else {
+        UncheckedHrpstring::new(s).ok()?.remove_checksum::<Bech32m>()
+    };
+    let mut fe_iter = checked.fe32_iter::<core::iter::Empty<u8>>();
+    let version_fe = fe_iter.next()?;
+    let program: Vec<u8> = {
+        use bech32::Fe32IterExt;
+        fe_iter.fes_to_bytes().collect()
+    };
+
+    let version = WitnessVersion::try_from(version_fe).ok()?;
+    // Enforce Litecoin's version → checksum-variant invariant.
+    let expected_bech32 = litecoin_uses_bech32(version);
+    if expected_bech32 && !valid_bech32 {
+        return None;
+    }
+    if !expected_bech32 && !valid_bech32m {
+        return None;
+    }
+    Some((hrp, version, program))
 }
 
 /// Known bech32 human-readable parts.
@@ -206,6 +399,22 @@ const HRP_LTC: Hrp = Hrp::parse_unchecked("ltc");
 const HRP_TLTC: Hrp = Hrp::parse_unchecked("tltc");
 /// Litecoin segwit HRP: regtest (`rltc`).
 const HRP_RLTC: Hrp = Hrp::parse_unchecked("rltc");
+
+/// Litecoin MWEB stealth-address HRP: mainnet (`ltcmweb`).
+const HRP_LTCMWEB: Hrp = Hrp::parse_unchecked("ltcmweb");
+/// Litecoin MWEB stealth-address HRP: testnet4 / regtest (`tmweb`).
+const HRP_TMWEB: Hrp = Hrp::parse_unchecked("tmweb");
+
+/// Returns the MWEB stealth-address HRP for the given network kind.
+///
+/// Per `litecoin/src/chainparams.cpp`: mainnet uses `ltcmweb`; testnet4 and regtest both use
+/// `tmweb`.
+fn mweb_hrp_for(network: NetworkKind) -> Hrp {
+    match network {
+        NetworkKind::Main => HRP_LTCMWEB,
+        NetworkKind::Test => HRP_TMWEB,
+    }
+}
 
 impl KnownHrp {
     /// Creates a `KnownHrp` from `network`.
@@ -267,6 +476,15 @@ pub enum AddressData {
     Segwit {
         /// The witness program used to encumber outputs to this address.
         witness_program: WitnessProgram,
+    },
+    /// Data encoded by a Litecoin MWEB stealth address. Unlike the other variants this does
+    /// not produce a regular on-chain script_pubkey; the destination lives in the MWEB
+    /// extension block.
+    Mweb {
+        /// 33-byte compressed scan public key (`A_i` in the MWEB design).
+        scan: [u8; 33],
+        /// 33-byte compressed spend public key (`B_i` in the MWEB design).
+        spend: [u8; 33],
     },
 }
 
@@ -490,6 +708,25 @@ impl Address {
         Address(inner, PhantomData)
     }
 
+    /// Creates a Litecoin MWEB stealth address from the scan / spend public keys.
+    ///
+    /// Accepting [`secp256k1::PublicKey`] forces both halves to be on-curve compressed points,
+    /// matching ltcsuite's `secp256k1.ParsePubKey` validation in `NewAddressMweb`.
+    pub fn mweb(
+        scan: secp256k1::PublicKey,
+        spend: secp256k1::PublicKey,
+        network: impl Into<NetworkKind>,
+    ) -> Address {
+        Address(
+            AddressInner::Mweb {
+                scan: scan.serialize(),
+                spend: spend.serialize(),
+                network: network.into(),
+            },
+            PhantomData,
+        )
+    }
+
     /// Gets the address type of the address.
     ///
     /// # Returns
@@ -512,6 +749,7 @@ impl Address {
                 } else {
                     None
                 },
+            AddressInner::Mweb { .. } => Some(AddressType::Mweb),
         }
     }
 
@@ -523,6 +761,7 @@ impl Address {
             AddressInner::P2pkh { hash, network: _ } => P2pkh { pubkey_hash: hash },
             AddressInner::P2sh { hash, network: _ } => P2sh { script_hash: hash },
             AddressInner::Segwit { program, hrp: _ } => Segwit { witness_program: program },
+            AddressInner::Mweb { scan, spend, network: _ } => Mweb { scan, spend },
         }
     }
 
@@ -597,6 +836,10 @@ impl Address {
     }
 
     /// Generates a script pubkey spending to this address.
+    ///
+    /// **MWEB stealth addresses have no on-chain `script_pubkey`** — the destination lives in
+    /// the MWEB extension block. This method returns an empty script for `AddressType::Mweb`;
+    /// callers should detect `Mweb` via [`Address::address_type`] before constructing TxOuts.
     pub fn script_pubkey(&self) -> ScriptBuf {
         use AddressInner::*;
         match self.0 {
@@ -607,6 +850,7 @@ impl Address {
                 let version = program.version();
                 ScriptBuf::new_witness_program_unchecked(version, prog)
             }
+            Mweb { .. } => ScriptBuf::new(),
         }
     }
 
@@ -673,6 +917,8 @@ impl Address {
             Segwit { ref program, hrp: _ } if script.is_witness_program() =>
                 &script.as_bytes()[2..] == program.program().as_bytes(),
             P2pkh { .. } | P2sh { .. } | Segwit { .. } => false,
+            // MWEB stealth addresses don't have an on-chain script_pubkey.
+            Mweb { .. } => false,
         }
     }
 
@@ -690,6 +936,9 @@ impl Address {
             P2sh { ref hash, network: _ } => hash.as_ref(),
             P2pkh { ref hash, network: _ } => hash.as_ref(),
             Segwit { ref program, hrp: _ } => program.program().as_bytes(),
+            // For MWEB the "payload" is the concatenated scan||spend keys. Callers that need
+            // the components separately should match on `AddressInner::Mweb` directly.
+            Mweb { ref scan, .. } => scan,
         }
     }
 }
@@ -731,6 +980,7 @@ impl Address<NetworkUnchecked> {
             P2pkh { hash: _, ref network } => *network == NetworkKind::from(n),
             P2sh { hash: _, ref network } => *network == NetworkKind::from(n),
             Segwit { program: _, ref hrp } => *hrp == KnownHrp::from_network(n),
+            Mweb { scan: _, spend: _, ref network } => *network == NetworkKind::from(n),
         }
     }
 
@@ -822,10 +1072,18 @@ impl FromStr for Address<NetworkUnchecked> {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Address<NetworkUnchecked>, ParseError> {
-        if let Ok((hrp, witness_version, data)) = bech32::segwit::decode(s) {
-            let version = WitnessVersion::try_from(witness_version)?;
-            let program = WitnessProgram::new(version, &data)
-                .expect("bech32 guarantees valid program length for witness");
+        // Litecoin MWEB stealth addresses (`ltcmweb1…` / `tmweb1…`) use a bech32 payload of 66
+        // bytes (scan ∥ spend pubkeys). They share the bech32 family but are distinct from
+        // BIP-141 witness addresses, so check for the MWEB HRPs first.
+        if let Some((scan, spend, network)) = litecoin_mweb_decode(s) {
+            let inner = AddressInner::Mweb { scan, spend, network };
+            return Ok(Address(inner, PhantomData));
+        }
+
+        if let Some((hrp, version, data)) = litecoin_segwit_decode(s) {
+            // Reject programs with invalid lengths (BIP-141 length constraints) instead of
+            // panicking — a valid-checksum string with a bad length is a parse error.
+            let program = WitnessProgram::new(version, &data)?;
 
             let hrp = KnownHrp::from_hrp(hrp)?;
             let inner = AddressInner::Segwit { program, hrp };
@@ -1033,6 +1291,109 @@ mod tests {
 
         let addr = Address::from_witness_program(program, KnownHrp::Mainnet);
         roundtrips(&addr, Bitcoin);
+    }
+
+    #[test]
+    fn test_hogex_addr_encoding() {
+        // HogEx output script: witness version 8, 32-byte program.
+        // Address must use bech32 (not bech32m). Regression test for the original
+        // rust-litecoin issue #4. The tx is a real Litecoin mainnet HogEx coinbase output.
+        let tx_bytes = hex!(
+            "020000000008014c6760f58df93356b4f23ab8be1f33b44be814bdfafb77c9758682d39d492eb50000\
+             000000ffffffff012c8a768b1c030000225820638c6c06eef97d9155e56990ad0cf3358ce00b47609\
+             f132750cbd05364db58da0000000000"
+        );
+        let tx: crate::Transaction = crate::consensus::deserialize(&tx_bytes).unwrap();
+        let addr = Address::from_script(&tx.output[0].script_pubkey, Network::Bitcoin).unwrap();
+        // V8 witness program — must use bech32 checksum, not bech32m.
+        assert_eq!(
+            addr.to_string(),
+            "ltc1gvwxxcphwl97ez409dxg26r8nxkxwqz68vz03xf6se0g9xexmtrdqu4hale"
+        );
+        roundtrips(&addr, Bitcoin);
+    }
+
+    #[test]
+    fn test_mweb_stealth_address_roundtrip() {
+        // Construct an MWEB address from two real compressed secp256k1 pubkeys, then verify
+        // the bech32 encoding round-trips and stays string-stable. The constructor demands
+        // typed `secp256k1::PublicKey`s, so off-curve garbage cannot be stored.
+        use crate::hex::FromHex;
+        let scan_bytes: [u8; 33] = <[u8; 33]>::from_hex(
+            "0339a36013301597daef41fbe593a02cc513d0b55527ec2df1050e2e8ff49c85c2",
+        )
+        .expect("scan hex");
+        let spend_bytes: [u8; 33] = <[u8; 33]>::from_hex(
+            "035a784662a4a20a65bf6aab9ae98a6c068a81c52e4b032c0fb5400c706cfccc56",
+        )
+        .expect("spend hex");
+        let scan = secp256k1::PublicKey::from_slice(&scan_bytes).expect("scan on-curve");
+        let spend = secp256k1::PublicKey::from_slice(&spend_bytes).expect("spend on-curve");
+
+        let addr = Address::mweb(scan, spend, NetworkKind::Main);
+        assert_eq!(addr.address_type(), Some(AddressType::Mweb));
+        // Encoded form must start with the canonical `ltcmweb1qq…` prefix (HRP + separator +
+        // leading version `q` (0) + the q-prefix of the scan pubkey).
+        let encoded = addr.to_string();
+        assert!(
+            encoded.starts_with("ltcmweb1"),
+            "expected ltcmweb HRP, got {}",
+            encoded
+        );
+
+        // Round-trip via FromStr: parsed checked address must equal the original.
+        let parsed: Address<NetworkUnchecked> = encoded.parse().expect("parse mweb addr");
+        let checked = parsed.require_network(Network::Bitcoin).expect("mainnet mweb");
+        assert_eq!(checked, addr);
+        assert_eq!(checked.to_string(), encoded);
+
+        // `script_pubkey` for MWEB returns an empty script — destination lives in the MWEB
+        // extension block, not on the regular UTXO set.
+        assert!(checked.script_pubkey().is_empty());
+
+        // Network checks.
+        let mweb_unchecked: Address<NetworkUnchecked> = encoded.parse().unwrap();
+        assert!(mweb_unchecked.is_valid_for_network(Network::Bitcoin));
+        assert!(!mweb_unchecked.is_valid_for_network(Network::Testnet4));
+
+        // A real-mainnet MWEB address must NOT decode under a testnet HRP.
+        let testnet_encoded = encoded.replace("ltcmweb1", "tmweb1");
+        assert!(
+            testnet_encoded.parse::<Address<NetworkUnchecked>>().is_err(),
+            "checksum-busted HRP swap must not parse"
+        );
+    }
+
+    #[test]
+    fn test_mweb_stealth_address_invalid_pubkey_rejected() {
+        // 66 zero bytes do NOT form valid compressed pubkeys (compressed pubkeys start with
+        // 0x02 or 0x03). Even with a valid bech32 checksum the parser must reject these,
+        // matching ltcsuite's `secp256k1.ParsePubKey` check.
+        use bech32::{Bech32, ByteIterExt, Fe32, Fe32IterExt};
+        let mut buf = String::new();
+        let payload = [0u8; 66];
+        let iter = payload.iter().copied().bytes_to_fes();
+        let bytes = iter
+            .with_checksum::<Bech32>(&HRP_LTCMWEB)
+            .with_witness_version(Fe32::Q)
+            .bytes();
+        for b in bytes {
+            buf.push(b as char);
+        }
+        assert!(buf.parse::<Address<NetworkUnchecked>>().is_err());
+    }
+
+    #[test]
+    fn test_mweb_pegin_v9_addr_encoding() {
+        // Witness version 9 (MWEB peg-in) similarly uses bech32 (not bech32m).
+        let program = hex!(
+            "660306b11402a8a3c2f13ff9bd1a6f7e1aaa3f811fb72d498bf8e0b11f9eb80e"
+        );
+        let program = WitnessProgram::new(WitnessVersion::V9, &program).expect("v9 program");
+        let addr = Address::from_witness_program(program, KnownHrp::Mainnet);
+        // Round-trip via Display + FromStr verifies the bech32 (not bech32m) checksum path.
+        let parsed: Address<NetworkUnchecked> = addr.to_string().parse().expect("parse");
+        assert_eq!(parsed.assume_checked(), addr);
     }
 
     #[test]

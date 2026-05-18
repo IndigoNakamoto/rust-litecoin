@@ -609,6 +609,9 @@ impl_array!(12);
 impl_array!(16);
 impl_array!(32);
 impl_array!(33);
+// MWEB-specific sizes: kernel/input/output signatures (64) and bulletproof range proofs (675).
+impl_array!(64);
+impl_array!(675);
 
 impl Decodable for [u16; 8] {
     #[inline]
@@ -684,6 +687,11 @@ impl_vec!(TapLeafHash);
 impl_vec!(VarInt);
 impl_vec!(ShortId);
 impl_vec!(PrefilledTransaction);
+// Litecoin MWEB
+impl_vec!(crate::blockdata::mimblewimble::Input);
+impl_vec!(crate::blockdata::mimblewimble::Output);
+impl_vec!(crate::blockdata::mimblewimble::Kernel);
+impl_vec!(crate::blockdata::mimblewimble::PegOutCoin);
 
 #[cfg(feature = "std")]
 impl_vec!(Inventory);

@@ -9,6 +9,7 @@
 pub mod block;
 pub mod constants;
 pub mod locktime;
+pub mod mimblewimble;
 pub mod opcodes;
 pub mod script;
 pub mod transaction;

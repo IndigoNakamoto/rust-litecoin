@@ -1,12 +1,13 @@
 [package]
-name = "bitcoin-units"
-version = "0.1.1"
+name = "litecoin-units"
+version = "0.1.0"
 authors = ["Andrew Poelstra <apoelstra@wpsoftware.net>"]
 license = "CC0-1.0"
-repository = "https://github.com/rust-bitcoin/rust-bitcoin/"
-description = "Basic Bitcoin numeric units such as amount"
+repository = "https://github.com/rust-litecoin/rust-litecoin/"
+documentation = "https://docs.rs/litecoin-units/"
+description = "Basic Litecoin numeric units such as Amount (84M LTC supply cap)."
 categories = ["cryptography::cryptocurrencies"]
-keywords = ["bitcoin", "newtypes"]
+keywords = ["litecoin", "newtypes"]
 readme = "README.md"
 edition = "2021"
 rust-version = "1.56.1"

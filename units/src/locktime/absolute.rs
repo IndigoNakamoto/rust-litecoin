@@ -52,7 +52,7 @@ impl Height {
     ///
     /// # Examples
     /// ```rust
-    /// use bitcoin_units::locktime::absolute::Height;
+    /// use litecoin_units::locktime::absolute::Height;
     ///
     /// let h: u32 = 741521;
     /// let height = Height::from_consensus(h).expect("invalid height value");
@@ -147,7 +147,7 @@ impl Time {
     ///
     /// # Examples
     /// ```rust
-    /// use bitcoin_units::locktime::absolute::Time;
+    /// use litecoin_units::locktime::absolute::Time;
     ///
     /// let t: u32 = 1653195600; // May 22nd, 5am UTC.
     /// let time = Time::from_consensus(t).expect("invalid time value");

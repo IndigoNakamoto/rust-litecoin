@@ -7,8 +7,9 @@
 
   <p>Forked from <a href="https://github.com/rust-bitcoin/rust-bitcoin">rust-bitcoin</a>;
     chain parameters, address formats, MWEB wire types and HogEx transaction handling are
-    Litecoin-specific. The crate name and module paths are preserved to make it easy to swap
-    rust-bitcoin for rust-litecoin via a single Cargo patch.
+    Litecoin-specific. The crate is published as <code>litecoin</code>; the module layout
+    mirrors rust-bitcoin so wallet code already using rust-bitcoin can migrate by renaming
+    its imports.
   </p>
 
   <p>
@@ -53,9 +54,9 @@ please let us know, so we can know how large the interest is and possibly decide
 
 ## Documentation
 
-API docs follow upstream rust-bitcoin's structure under the `bitcoin::*` namespace. Most
+API docs follow upstream rust-bitcoin's structure under the `litecoin::*` namespace. Most
 Bitcoin-named types map directly onto Litecoin equivalents; the MWEB-specific surface lives in
-`bitcoin::blockdata::mimblewimble` and on the `Block` / `Transaction` extension fields.
+`litecoin::blockdata::mimblewimble` and on the `Block` / `Transaction` extension fields.
 
 ## Contributing
 
@@ -196,9 +197,9 @@ Alternatively add symlinks in your `.git/hooks` directory to any of the githooks
 
 This is a fork. We pull from `rust-bitcoin/rust-bitcoin` periodically and re-apply the
 Litecoin-specific layer on top — chain identity, MWEB wire types, HogEx handling, LTC address
-HRPs, magic bytes, genesis, WIF prefix, signed-message prefix. The crate name stays `bitcoin`
-to keep `[patch.crates-io.bitcoin]` workable as the integration path for downstream wallets
-already on rust-bitcoin.
+HRPs, magic bytes, genesis, WIF prefix, signed-message prefix. The main crate is published as
+`litecoin`; subsidiary crates (`bitcoin_hashes`, `bitcoin-internals`, `bitcoin-io`,
+`bitcoin-units`, `base58ck`) keep their upstream names since they are shared crypto utilities.
 
 Bug reports about the Litecoin layer belong here; bug reports about Bitcoin-shared code should
 generally be filed upstream first.
@@ -208,7 +209,7 @@ generally be filed upstream first.
 
 Release notes are done per crate, see:
 
-- [bitcoin CHANGELOG](bitcoin/CHANGELOG.md)
+- [litecoin CHANGELOG](litecoin/CHANGELOG.md)
 - [hashes CHANGELOG](hashes/CHANGELOG.md)
 - [internals CHANGELOG](internals/CHANGELOG.md)
 

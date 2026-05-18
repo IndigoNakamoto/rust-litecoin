@@ -1,30 +1,21 @@
-use litecoin::hashes::{ripemd160, sha1, sha256d, sha512, Hmac};
+use std::str::FromStr;
+
 use honggfuzz::fuzz;
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize, Serialize)]
-struct Hmacs {
-    sha1: Hmac<sha1::Hash>,
-    sha512: Hmac<sha512::Hash>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct Main {
-    hmacs: Hmacs,
-    ripemd: ripemd160::Hash,
-    sha2d: sha256d::Hash,
-}
 
 fn do_test(data: &[u8]) {
-    if let Ok(m) = serde_cbor::from_slice::<Main>(data) {
-        let vec = serde_cbor::to_vec(&m).unwrap();
-        assert_eq!(data, &vec[..]);
-    }
+    let data_str = String::from_utf8_lossy(data);
+    let addr = match litecoin::address::Address::from_str(&data_str) {
+        Ok(addr) => addr.assume_checked(),
+        Err(_) => return,
+    };
+    assert_eq!(addr.to_string(), data_str);
 }
 
 fn main() {
     loop {
-        fuzz!(|d| { do_test(d) });
+        fuzz!(|data| {
+            do_test(data);
+        });
     }
 }
 
@@ -50,7 +41,7 @@ mod tests {
     #[test]
     fn duplicate_crash() {
         let mut a = Vec::new();
-        extend_vec_from_hex("00000", &mut a);
+        extend_vec_from_hex("00000000", &mut a);
         super::do_test(&a);
     }
 }

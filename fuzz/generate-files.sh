@@ -10,7 +10,7 @@ source "$REPO_DIR/fuzz/fuzz-util.sh"
 # 1. Generate fuzz/Cargo.toml
 cat > "$REPO_DIR/fuzz/Cargo.toml" <<EOF
 [package]
-name = "bitcoin-fuzz"
+name = "litecoin-fuzz"
 edition = "2021"
 rust-version = "1.56.1"
 version = "0.0.1"
@@ -22,7 +22,7 @@ cargo-fuzz = true
 
 [dependencies]
 honggfuzz = { version = "0.5.55", default-features = false }
-bitcoin = { version = "0.31.0", features = [ "serde" ] }
+litecoin = { path = "../litecoin", features = [ "serde" ] }
 
 serde = { version = "1.0.103", features = [ "derive" ] }
 serde_json = "1.0"
@@ -78,7 +78,7 @@ $(for name in $(listTargetNames); do echo "          $name,"; done)
           toolchain: '1.65.0'
       - name: fuzz
         run: |
-          if [[ "\${{ matrix.fuzz_target }}" =~ ^bitcoin ]]; then
+          if [[ "\${{ matrix.fuzz_target }}" =~ ^litecoin ]]; then
               export RUSTFLAGS='--cfg=hashes_fuzz --cfg=secp256k1_fuzz'
           fi
           echo "Using RUSTFLAGS \$RUSTFLAGS"

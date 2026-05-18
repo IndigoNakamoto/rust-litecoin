@@ -1,5 +1,5 @@
 [package]
-name = "bitcoin-fuzz"
+name = "litecoin-fuzz"
 edition = "2021"
 rust-version = "1.56.1"
 version = "0.0.1"
@@ -11,51 +11,51 @@ cargo-fuzz = true
 
 [dependencies]
 honggfuzz = { version = "0.5.55", default-features = false }
-bitcoin = { path = "../bitcoin", features = [ "serde" ] }
+litecoin = { path = "../litecoin", features = [ "serde" ] }
 
 serde = { version = "1.0.103", features = [ "derive" ] }
 serde_json = "1.0"
 serde_cbor = "0.9"
 
 [[bin]]
-name = "bitcoin_deserialize_address"
-path = "fuzz_targets/bitcoin/deserialize_address.rs"
+name = "litecoin_deserialize_address"
+path = "fuzz_targets/litecoin/deserialize_address.rs"
 
 [[bin]]
-name = "bitcoin_deserialize_block"
-path = "fuzz_targets/bitcoin/deserialize_block.rs"
+name = "litecoin_deserialize_block"
+path = "fuzz_targets/litecoin/deserialize_block.rs"
 
 [[bin]]
-name = "bitcoin_deserialize_prefilled_transaction"
-path = "fuzz_targets/bitcoin/deserialize_prefilled_transaction.rs"
+name = "litecoin_deserialize_prefilled_transaction"
+path = "fuzz_targets/litecoin/deserialize_prefilled_transaction.rs"
 
 [[bin]]
-name = "bitcoin_deserialize_psbt"
-path = "fuzz_targets/bitcoin/deserialize_psbt.rs"
+name = "litecoin_deserialize_psbt"
+path = "fuzz_targets/litecoin/deserialize_psbt.rs"
 
 [[bin]]
-name = "bitcoin_deserialize_script"
-path = "fuzz_targets/bitcoin/deserialize_script.rs"
+name = "litecoin_deserialize_script"
+path = "fuzz_targets/litecoin/deserialize_script.rs"
 
 [[bin]]
-name = "bitcoin_deserialize_transaction"
-path = "fuzz_targets/bitcoin/deserialize_transaction.rs"
+name = "litecoin_deserialize_transaction"
+path = "fuzz_targets/litecoin/deserialize_transaction.rs"
 
 [[bin]]
-name = "bitcoin_deserialize_witness"
-path = "fuzz_targets/bitcoin/deserialize_witness.rs"
+name = "litecoin_deserialize_witness"
+path = "fuzz_targets/litecoin/deserialize_witness.rs"
 
 [[bin]]
-name = "bitcoin_deser_net_msg"
-path = "fuzz_targets/bitcoin/deser_net_msg.rs"
+name = "litecoin_deser_net_msg"
+path = "fuzz_targets/litecoin/deser_net_msg.rs"
 
 [[bin]]
-name = "bitcoin_outpoint_string"
-path = "fuzz_targets/bitcoin/outpoint_string.rs"
+name = "litecoin_outpoint_string"
+path = "fuzz_targets/litecoin/outpoint_string.rs"
 
 [[bin]]
-name = "bitcoin_script_bytes_to_asm_fmt"
-path = "fuzz_targets/bitcoin/script_bytes_to_asm_fmt.rs"
+name = "litecoin_script_bytes_to_asm_fmt"
+path = "fuzz_targets/litecoin/script_bytes_to_asm_fmt.rs"
 
 [[bin]]
 name = "hashes_cbor"

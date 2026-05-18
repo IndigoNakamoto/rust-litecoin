@@ -54,7 +54,7 @@ jobs:
           toolchain: '1.65.0'
       - name: fuzz
         run: |
-          if [[ "${{ matrix.fuzz_target }}" =~ ^bitcoin ]]; then
+          if [[ "${{ matrix.fuzz_target }}" =~ ^litecoin ]]; then
               export RUSTFLAGS='--cfg=hashes_fuzz --cfg=secp256k1_fuzz'
           fi
           echo "Using RUSTFLAGS $RUSTFLAGS"

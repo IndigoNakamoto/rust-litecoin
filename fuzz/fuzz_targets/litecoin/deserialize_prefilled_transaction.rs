@@ -1,30 +1,24 @@
-use litecoin::hashes::{ripemd160, sha1, sha256d, sha512, Hmac};
 use honggfuzz::fuzz;
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize, Serialize)]
-struct Hmacs {
-    sha1: Hmac<sha1::Hash>,
-    sha512: Hmac<sha512::Hash>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct Main {
-    hmacs: Hmacs,
-    ripemd: ripemd160::Hash,
-    sha2d: sha256d::Hash,
-}
 
 fn do_test(data: &[u8]) {
-    if let Ok(m) = serde_cbor::from_slice::<Main>(data) {
-        let vec = serde_cbor::to_vec(&m).unwrap();
-        assert_eq!(data, &vec[..]);
+    // We already fuzz Transactions in `./deserialize_transaction.rs`.
+    let tx_result: Result<litecoin::bip152::PrefilledTransaction, _> =
+        litecoin::consensus::encode::deserialize(data);
+
+    match tx_result {
+        Err(_) => {}
+        Ok(tx) => {
+            let ser = litecoin::consensus::encode::serialize(&tx);
+            assert_eq!(&ser[..], data);
+        }
     }
 }
 
 fn main() {
     loop {
-        fuzz!(|d| { do_test(d) });
+        fuzz!(|data| {
+            do_test(data);
+        });
     }
 }
 
@@ -50,7 +44,7 @@ mod tests {
     #[test]
     fn duplicate_crash() {
         let mut a = Vec::new();
-        extend_vec_from_hex("00000", &mut a);
+        extend_vec_from_hex("00000000", &mut a);
         super::do_test(&a);
     }
 }

@@ -1,30 +1,26 @@
-use litecoin::hashes::{ripemd160, sha1, sha256d, sha512, Hmac};
+use std::fmt;
+
 use honggfuzz::fuzz;
-use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize)]
-struct Hmacs {
-    sha1: Hmac<sha1::Hash>,
-    sha512: Hmac<sha512::Hash>,
-}
+// faster than String, we don't need to actually produce the value, just check absence of panics
+struct NullWriter;
 
-#[derive(Deserialize, Serialize)]
-struct Main {
-    hmacs: Hmacs,
-    ripemd: ripemd160::Hash,
-    sha2d: sha256d::Hash,
+impl fmt::Write for NullWriter {
+    fn write_str(&mut self, _s: &str) -> fmt::Result { Ok(()) }
+
+    fn write_char(&mut self, _c: char) -> fmt::Result { Ok(()) }
 }
 
 fn do_test(data: &[u8]) {
-    if let Ok(m) = serde_cbor::from_slice::<Main>(data) {
-        let vec = serde_cbor::to_vec(&m).unwrap();
-        assert_eq!(data, &vec[..]);
-    }
+    let mut writer = NullWriter;
+    litecoin::Script::from_bytes(data).fmt_asm(&mut writer).unwrap();
 }
 
 fn main() {
     loop {
-        fuzz!(|d| { do_test(d) });
+        fuzz!(|data| {
+            do_test(data);
+        });
     }
 }
 

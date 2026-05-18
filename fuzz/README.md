@@ -1,6 +1,6 @@
 # Fuzzing
 
-`bitcoin` and `bitcoin_hashes` have fuzzing harnesses setup for use with
+`litecoin` and `bitcoin_hashes` have fuzzing harnesses setup for use with
 honggfuzz.
 
 To run the fuzz-tests as in CI -- briefly fuzzing every target -- simply

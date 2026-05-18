@@ -106,7 +106,7 @@ do_feature_matrix() {
     # All crates have a "std" feature.
     loop_features "std" "$FEATURES_WITH_STD"
 
-    # All but `bitcoin` crate have an "alloc" feature, this tests it
+    # All but `litecoin` crate have an "alloc" feature, this tests it
     # along with any other features that should work with "std".
     if [ -n "$FEATURES_WITHOUT_STD" ]
        then
@@ -163,7 +163,7 @@ do_lint() {
 }
 
 # We should not have any duplicate dependencies. This catches mistakes made upgrading dependencies
-# in one crate and not in another (e.g. upgrade bitcoin_hashes in bitcoin but not in secp).
+# in one crate and not in another (e.g. upgrade bitcoin_hashes in litecoin but not in secp).
 do_dup_deps() {
     # We can't use pipefail because these grep statements fail by design when there is no duplicate,
     # the shell therefore won't pick up mistakes in your pipe - you are on your own.

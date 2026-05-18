@@ -1,30 +1,23 @@
-use litecoin::hashes::{ripemd160, sha1, sha256d, sha512, Hmac};
 use honggfuzz::fuzz;
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize, Serialize)]
-struct Hmacs {
-    sha1: Hmac<sha1::Hash>,
-    sha512: Hmac<sha512::Hash>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct Main {
-    hmacs: Hmacs,
-    ripemd: ripemd160::Hash,
-    sha2d: sha256d::Hash,
-}
 
 fn do_test(data: &[u8]) {
-    if let Ok(m) = serde_cbor::from_slice::<Main>(data) {
-        let vec = serde_cbor::to_vec(&m).unwrap();
-        assert_eq!(data, &vec[..]);
+    let psbt: Result<litecoin::psbt::Psbt, _> = litecoin::psbt::Psbt::deserialize(data);
+    match psbt {
+        Err(_) => {}
+        Ok(psbt) => {
+            let ser = litecoin::psbt::Psbt::serialize(&psbt);
+            let deser = litecoin::psbt::Psbt::deserialize(&ser).unwrap();
+            // Since the fuzz data could order psbt fields differently, we compare to our deser/ser instead of data
+            assert_eq!(ser, litecoin::psbt::Psbt::serialize(&deser));
+        }
     }
 }
 
 fn main() {
     loop {
-        fuzz!(|d| { do_test(d) });
+        fuzz!(|data| {
+            do_test(data);
+        });
     }
 }
 
@@ -50,7 +43,7 @@ mod tests {
     #[test]
     fn duplicate_crash() {
         let mut a = Vec::new();
-        extend_vec_from_hex("00000", &mut a);
+        extend_vec_from_hex("00", &mut a);
         super::do_test(&a);
     }
 }

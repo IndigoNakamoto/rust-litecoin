@@ -866,7 +866,8 @@ impl Amount {
     /// Exactly one bitcoin.
     pub const ONE_BTC: Amount = Self::from_int_btc(1);
     /// The maximum value allowed as an amount. Useful for sanity checking.
-    pub const MAX_MONEY: Amount = Self::from_int_btc(21_000_000);
+    /// Litecoin: 84,000,000 LTC supply cap (4x Bitcoin's).
+    pub const MAX_MONEY: Amount = Self::from_int_btc(84_000_000);
     /// The minimum value of an amount.
     pub const MIN: Amount = Amount::ZERO;
     /// The maximum value of an amount.
@@ -1280,7 +1281,8 @@ impl SignedAmount {
     /// Exactly one bitcoin.
     pub const ONE_BTC: SignedAmount = SignedAmount(100_000_000);
     /// The maximum value allowed as an amount. Useful for sanity checking.
-    pub const MAX_MONEY: SignedAmount = SignedAmount(21_000_000 * 100_000_000);
+    /// Litecoin: 84,000,000 LTC supply cap.
+    pub const MAX_MONEY: SignedAmount = SignedAmount(84_000_000 * 100_000_000);
     /// The minimum value of an amount.
     pub const MIN: SignedAmount = SignedAmount(i64::MIN);
     /// The maximum value of an amount.

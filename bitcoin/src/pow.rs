@@ -143,29 +143,28 @@ impl Target {
     /// possible target. Remember highest target == lowest difficulty.
     ///
     /// ref: <https://en.bitcoin.it/wiki/Target>
-    // In Bitcoind this is ~(u256)0 >> 32 stored as a floating-point type so it gets truncated, hence
-    // the low 208 bits are all zero.
-    pub const MAX: Self = Target(U256(0xFFFF_u128 << (208 - 128), 0));
-
-    /// The maximum **attainable** target value on mainnet.
     ///
-    /// Not all target values are attainable because consensus code uses the compact format to
-    /// represent targets (see [`CompactTarget`]).
-    pub const MAX_ATTAINABLE_MAINNET: Self = Target(U256(0xFFFF_u128 << (208 - 128), 0));
+    /// For Litecoin this is the mainnet pow limit (compact `0x1e0ffff0`), matching
+    /// `MAX_ATTAINABLE_MAINNET`. Used by `Target::difficulty_float` as the implicit divisor.
+    pub const MAX: Self = Target(U256(0x0fff_f0_u128 << 88, 0));
 
-    /// The proof of work limit on testnet.
-    // Taken from Bitcoin Core but had lossy conversion to/from compact form.
-    // https://github.com/bitcoin/bitcoin/blob/8105bce5b384c72cf08b25b7c5343622754e7337/src/kernel/chainparams.cpp#L208
-    pub const MAX_ATTAINABLE_TESTNET: Self = Target(U256(0xFFFF_u128 << (208 - 128), 0));
+    /// The maximum **attainable** target value on Litecoin mainnet.
+    ///
+    /// Encoded as compact `0x1e0ffff0` (mantissa `0x0ffff0`, exponent 30).
+    /// Value: `0x0ffff0 << (8 * 27)` = `0x0ffff0_u128 << 88` placed in U256's high half.
+    pub const MAX_ATTAINABLE_MAINNET: Self = Target(U256(0x0fff_f0_u128 << 88, 0));
+
+    /// The maximum **attainable** target value on Litecoin testnet4.
+    ///
+    /// Encoded as compact `0x1e0fffff` (mantissa `0x0fffff`, exponent 30).
+    pub const MAX_ATTAINABLE_TESTNET: Self = Target(U256(0x0f_ffff_u128 << 88, 0));
 
     /// The proof of work limit on regtest.
-    // Taken from Bitcoin Core but had lossy conversion to/from compact form.
-    // https://github.com/bitcoin/bitcoin/blob/8105bce5b384c72cf08b25b7c5343622754e7337/src/kernel/chainparams.cpp#L411
+    ///
+    /// Compact `0x207fffff`.
     pub const MAX_ATTAINABLE_REGTEST: Self = Target(U256(0x7FFF_FF00u128 << 96, 0));
 
-    /// The proof of work limit on signet.
-    // Taken from Bitcoin Core but had lossy conversion to/from compact form.
-    // https://github.com/bitcoin/bitcoin/blob/8105bce5b384c72cf08b25b7c5343622754e7337/src/kernel/chainparams.cpp#L348
+    /// The proof of work limit on signet (kept for upstream compat; Litecoin has no signet).
     pub const MAX_ATTAINABLE_SIGNET: Self = Target(U256(0x0377_ae00 << 80, 0));
 
     /// Computes the [`Target`] value from a compact representation.
@@ -917,7 +916,9 @@ impl U256 {
 
 // Target::MAX as a float value. Calculated with U256::to_f64.
 // This is validated in the unit tests as well.
-const TARGET_MAX_F64: f64 = 2.695953529101131e67;
+//
+// Litecoin: corresponds to the mainnet pow limit (compact `0x1e0ffff0`).
+const TARGET_MAX_F64: f64 = 1.1042625655198232e71;
 
 impl<T: Into<u128>> From<T> for U256 {
     fn from(x: T) -> Self { U256(0, x.into()) }
@@ -1920,8 +1921,8 @@ mod tests {
 
     #[test]
     fn max_target_from_compact() {
-        // The highest possible target is defined as 0x1d00ffff
-        let bits = 0x1d00ffff_u32;
+        // The Litecoin mainnet pow limit is `0x1e0ffff0`.
+        let bits = 0x1e0ffff0_u32;
         let want = Target::MAX;
         let got = Target::from_compact(CompactTarget::from_consensus(bits));
         assert_eq!(got, want)
@@ -1930,17 +1931,15 @@ mod tests {
     #[test]
     fn target_difficulty_float() {
         assert_eq!(Target::MAX.difficulty_float(), 1.0_f64);
+        // Bitcoin's `0x1d00ffff` is 4096x harder than LTC's `0x1e0ffff0` (one mantissa nibble
+        // shorter, one exponent byte higher).
+        assert_eq!(
+            Target::from_compact(CompactTarget::from_consensus(0x1d00ffff_u32)).difficulty_float(),
+            4096.0_f64
+        );
         assert_eq!(
             Target::from_compact(CompactTarget::from_consensus(0x1c00ffff_u32)).difficulty_float(),
-            256.0_f64
-        );
-        assert_eq!(
-            Target::from_compact(CompactTarget::from_consensus(0x1b00ffff_u32)).difficulty_float(),
-            65536.0_f64
-        );
-        assert_eq!(
-            Target::from_compact(CompactTarget::from_consensus(0x1a00f3a2_u32)).difficulty_float(),
-            17628585.065897066_f64
+            1048576.0_f64
         );
     }
 

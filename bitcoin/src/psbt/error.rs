@@ -41,6 +41,10 @@ pub enum Error {
     UnsignedTxHasScriptSigs,
     /// The scriptWitnesses for the unsigned transaction must be empty.
     UnsignedTxHasScriptWitnesses,
+    /// PSBT cannot represent a Litecoin MWEB transaction body or a HogEx flag.
+    /// PSBT v0 (BIP-174) has no field for MWEB data; including it would silently drop on
+    /// round-trip. Strip `mw_tx` / `is_hog_ex` before constructing the PSBT.
+    UnsupportedMwebOrHogEx,
     /// A PSBT must have an unsigned transaction.
     MustHaveUnsignedTx,
     /// Signals that there are no more key-value pairs in a key-value map.
@@ -122,6 +126,8 @@ impl fmt::Display for Error {
             UnsignedTxHasScriptSigs => f.write_str("the unsigned transaction has script sigs"),
             UnsignedTxHasScriptWitnesses =>
                 f.write_str("the unsigned transaction has script witnesses"),
+            UnsupportedMwebOrHogEx =>
+                f.write_str("PSBT cannot carry Litecoin MWEB transaction body or HogEx flag"),
             MustHaveUnsignedTx =>
                 f.write_str("partially signed transactions must have an unsigned transaction"),
             NoMorePairs => f.write_str("no more key-value pairs for this psbt map"),
@@ -179,6 +185,7 @@ impl std::error::Error for Error {
             | DuplicateKey(_)
             | UnsignedTxHasScriptSigs
             | UnsignedTxHasScriptWitnesses
+            | UnsupportedMwebOrHogEx
             | MustHaveUnsignedTx
             | NoMorePairs
             | UnexpectedUnsignedTx { .. }

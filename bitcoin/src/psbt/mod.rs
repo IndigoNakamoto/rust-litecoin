@@ -91,8 +91,12 @@ impl Psbt {
         })
     }
 
-    /// Checks that unsigned transaction does not have scriptSig's or witness data.
+    /// Checks that unsigned transaction does not have scriptSig's or witness data, and
+    /// does not carry any Litecoin MWEB extensions (which PSBT v0 cannot represent).
     fn unsigned_tx_checks(&self) -> Result<(), Error> {
+        if self.unsigned_tx.mw_tx.is_some() || self.unsigned_tx.is_hog_ex {
+            return Err(Error::UnsupportedMwebOrHogEx);
+        }
         for txin in &self.unsigned_tx.input {
             if !txin.script_sig.is_empty() {
                 return Err(Error::UnsignedTxHasScriptSigs);
@@ -1362,6 +1366,19 @@ mod tests {
             outputs: vec![],
         };
         assert_eq!(psbt.serialize_hex(), "70736274ff01000a0200000000000000000000");
+    }
+
+    #[test]
+    fn psbt_rejects_hog_ex_flag() {
+        let tx = Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![],
+            output: vec![],
+            mw_tx: None,
+            is_hog_ex: true,
+        };
+        assert!(matches!(Psbt::from_unsigned_tx(tx), Err(Error::UnsupportedMwebOrHogEx)));
     }
 
     #[test]

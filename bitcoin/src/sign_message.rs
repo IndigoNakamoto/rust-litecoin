@@ -15,8 +15,10 @@ use crate::consensus::{encode, Encodable};
 #[cfg(feature = "secp-recovery")]
 pub use self::message_signing::{MessageSignature, MessageSignatureError};
 
-/// The prefix for signed messages using Bitcoin's message signing protocol.
-pub const BITCOIN_SIGNED_MSG_PREFIX: &[u8] = b"\x18Bitcoin Signed Message:\n";
+/// The prefix for signed messages using Litecoin's message signing protocol.
+///
+/// Length byte `0x19` = 25 = byte length of "Litecoin Signed Message:\n".
+pub const BITCOIN_SIGNED_MSG_PREFIX: &[u8] = b"\x19Litecoin Signed Message:\n";
 
 #[cfg(feature = "secp-recovery")]
 mod message_signing {
@@ -214,9 +216,10 @@ mod tests {
     #[test]
     fn test_signed_msg_hash() {
         let hash = signed_msg_hash("test");
+        // Hash of `\x19Litecoin Signed Message:\n\x04test` (LTC prefix).
         assert_eq!(
             hash.to_string(),
-            "a6f87fe6d58a032c320ff8d1541656f0282c2c7bfcc69d61af4c8e8ed528e49c"
+            "2e340838f243370e2ee1b9198ef4ce473d1662aa54c496d7b7bb82ca83830bed"
         );
     }
 

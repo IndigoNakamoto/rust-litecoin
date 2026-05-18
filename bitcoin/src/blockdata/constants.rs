@@ -23,84 +23,71 @@ use crate::pow::CompactTarget;
 use crate::Amount;
 
 /// How many seconds between blocks we expect on average.
-pub const TARGET_BLOCK_SPACING: u32 = 600;
+pub const TARGET_BLOCK_SPACING: u32 = 150;
 /// How many blocks between diffchanges.
 pub const DIFFCHANGE_INTERVAL: u32 = 2016;
 /// How much time on average should occur between diffchanges.
-pub const DIFFCHANGE_TIMESPAN: u32 = 14 * 24 * 3600;
+pub const DIFFCHANGE_TIMESPAN: u32 = 150 * 2016;
 
 /// The factor that non-witness serialization data is multiplied by during weight calculation.
 pub const WITNESS_SCALE_FACTOR: usize = units::weight::WITNESS_SCALE_FACTOR;
 /// The maximum allowed number of signature check operations in a block.
 pub const MAX_BLOCK_SIGOPS_COST: i64 = 80_000;
-/// Mainnet (bitcoin) pubkey address prefix.
-pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 0; // 0x00
-/// Mainnet (bitcoin) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 5; // 0x05
-/// Test (tesnet, signet, regtest) pubkey address prefix.
+/// Mainnet (litecoin) pubkey address prefix.
+pub const PUBKEY_ADDRESS_PREFIX_MAIN: u8 = 48; // 0x30
+/// Mainnet (litecoin) script address prefix.
+pub const SCRIPT_ADDRESS_PREFIX_MAIN: u8 = 50; // 0x32
+/// Test (testnet, signet, regtest) pubkey address prefix.
 pub const PUBKEY_ADDRESS_PREFIX_TEST: u8 = 111; // 0x6f
-/// Test (tesnet, signet, regtest) script address prefix.
-pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 196; // 0xc4
+/// Test (testnet, signet, regtest) script address prefix.
+pub const SCRIPT_ADDRESS_PREFIX_TEST: u8 = 58; // 0x3a
 /// The maximum allowed script size.
 pub const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 /// How may blocks between halvings.
-pub const SUBSIDY_HALVING_INTERVAL: u32 = 210_000;
+pub const SUBSIDY_HALVING_INTERVAL: u32 = 840_000;
 /// Maximum allowed value for an integer in Script.
 pub const MAX_SCRIPTNUM_VALUE: u32 = 0x80000000; // 2^31
 /// Number of blocks needed for an output from a coinbase transaction to be spendable.
 pub const COINBASE_MATURITY: u32 = 100;
 
-// This is the 65 byte (uncompressed) pubkey used as the one-and-only output of the genesis transaction.
+// This is the 65 byte (uncompressed) pubkey used as the one-and-only output of the Litecoin genesis transaction.
 //
-// ref: https://blockstream.info/tx/4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b?expand
+// ref: https://litecoinspace.org/tx/97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9
 // Note output script includes a leading 0x41 and trailing 0xac (added below using the `script::Builder`).
 #[rustfmt::skip]
 const GENESIS_OUTPUT_PK: [u8; 65] = [
     0x04,
-    0x67, 0x8a, 0xfd, 0xb0, 0xfe, 0x55, 0x48, 0x27,
-    0x19, 0x67, 0xf1, 0xa6, 0x71, 0x30, 0xb7, 0x10,
-    0x5c, 0xd6, 0xa8, 0x28, 0xe0, 0x39, 0x09, 0xa6,
-    0x79, 0x62, 0xe0, 0xea, 0x1f, 0x61, 0xde, 0xb6,
-    0x49, 0xf6, 0xbc, 0x3f, 0x4c, 0xef, 0x38, 0xc4,
-    0xf3, 0x55, 0x04, 0xe5, 0x1e, 0xc1, 0x12, 0xde,
-    0x5c, 0x38, 0x4d, 0xf7, 0xba, 0x0b, 0x8d, 0x57,
-    0x8a, 0x4c, 0x70, 0x2b, 0x6b, 0xf1, 0x1d, 0x5f
+    0x01, 0x84, 0x71, 0x0f, 0xa6, 0x89, 0xad, 0x50,
+    0x23, 0x69, 0x0c, 0x80, 0xf3, 0xa4, 0x9c, 0x8f,
+    0x13, 0xf8, 0xd4, 0x5b, 0x8c, 0x85, 0x7f, 0xbc,
+    0xbc, 0x8b, 0xc4, 0xa8, 0xe4, 0xd3, 0xeb, 0x4b,
+    0x10, 0xf4, 0xd4, 0x60, 0x4f, 0xa0, 0x8d, 0xce,
+    0x60, 0x1a, 0xaf, 0x0f, 0x47, 0x02, 0x16, 0xfe,
+    0x1b, 0x51, 0x85, 0x0b, 0x4a, 0xcf, 0x21, 0xb1,
+    0x79, 0xc4, 0x50, 0x70, 0xac, 0x7b, 0x03, 0xa9
 ];
 
-#[rustfmt::skip]
-const TESTNET4_GENESIS_OUTPUT_PK: [u8; 33] = [0x00; 33];
-
-/// Constructs and returns the coinbase (and only) transaction of the Bitcoin genesis block.
-fn bitcoin_genesis_tx(params: &Params) -> Transaction {
-    // Base
+/// Constructs and returns the coinbase (and only) transaction of the Litecoin genesis block.
+fn bitcoin_genesis_tx(_params: &Params) -> Transaction {
+    // Base — Litecoin uses the same coinbase tx on every network.
     let mut ret = Transaction {
         version: transaction::Version::ONE,
         lock_time: absolute::LockTime::ZERO,
         input: vec![],
         output: vec![],
+        mw_tx: None,
+        is_hog_ex: false,
     };
 
-    let (in_script, out_script) = {
-        match params.network {
-            Network::Testnet4 => (
-                script::Builder::new()
-                .push_int(486604799)
-                .push_int_non_minimal(4)
-                .push_slice(b"03/May/2024 000000000000000000001ebd58c244970b3aa9d783bb001011fbe8ea8e98e00e")
-                .into_script(),
-                script::Builder::new().push_slice(TESTNET4_GENESIS_OUTPUT_PK).push_opcode(OP_CHECKSIG).into_script(),
-
-            ),
-            _ => (
-                script::Builder::new()
-                .push_int(486604799)
-                .push_int_non_minimal(4)
-                .push_slice(b"The Times 03/Jan/2009 Chancellor on brink of second bailout for banks")
-                .into_script(),
-                script::Builder::new().push_slice(GENESIS_OUTPUT_PK).push_opcode(OP_CHECKSIG).into_script(),
-            ),
-        }
-    };
+    let in_script = script::Builder::new()
+        .push_int(486604799)
+        .push_int_non_minimal(4)
+        .push_slice(b"NY Times 05/Oct/2011 Steve Jobs, Apple\xe2\x80\x99s Visionary, Dies at 56")
+        .into_script();
+    let out_script = script::Builder::new()
+        .push_slice(GENESIS_OUTPUT_PK)
+        .push_opcode(OP_CHECKSIG)
+        .into_script();
 
     ret.input.push(TxIn {
         previous_output: OutPoint::null(),
@@ -127,34 +114,27 @@ pub fn genesis_block(params: impl AsRef<Params>) -> Block {
                 version: block::Version::ONE,
                 prev_blockhash: Hash::all_zeros(),
                 merkle_root,
-                time: 1231006505,
-                bits: CompactTarget::from_consensus(0x1d00ffff),
-                nonce: 2083236893,
+                time: 1317972665,
+                bits: CompactTarget::from_consensus(0x1e0ffff0),
+                nonce: 2084524493,
             },
             txdata,
+            mweb_block: None,
         },
-        Network::Testnet => Block {
-            header: block::Header {
-                version: block::Version::ONE,
-                prev_blockhash: Hash::all_zeros(),
-                merkle_root,
-                time: 1296688602,
-                bits: CompactTarget::from_consensus(0x1d00ffff),
-                nonce: 414098458,
-            },
-            txdata,
-        },
+        // Litecoin testnet4 (the only LTC testnet).
         Network::Testnet4 => Block {
             header: block::Header {
                 version: block::Version::ONE,
                 prev_blockhash: Hash::all_zeros(),
                 merkle_root,
-                time: 1714777860,
-                bits: CompactTarget::from_consensus(0x1d00ffff),
-                nonce: 393743547,
+                time: 1486949366,
+                bits: CompactTarget::from_consensus(0x1e0ffff0),
+                nonce: 293345,
             },
             txdata,
+            mweb_block: None,
         },
+        // Signet is kept for upstream compatibility but Litecoin doesn't use it.
         Network::Signet => Block {
             header: block::Header {
                 version: block::Version::ONE,
@@ -165,6 +145,7 @@ pub fn genesis_block(params: impl AsRef<Params>) -> Block {
                 nonce: 52613770,
             },
             txdata,
+            mweb_block: None,
         },
         Network::Regtest => Block {
             header: block::Header {
@@ -173,9 +154,10 @@ pub fn genesis_block(params: impl AsRef<Params>) -> Block {
                 merkle_root,
                 time: 1296688602,
                 bits: CompactTarget::from_consensus(0x207fffff),
-                nonce: 2,
+                nonce: 0,
             },
             txdata,
+            mweb_block: None,
         },
     }
 }
@@ -187,37 +169,35 @@ impl_array_newtype!(ChainHash, u8, 32);
 impl_bytes_newtype!(ChainHash, 32);
 
 impl ChainHash {
-    // Mainnet value can be verified at https://github.com/lightning/bolts/blob/master/00-introduction.md
-    /// `ChainHash` for mainnet bitcoin.
+    // Litecoin mainnet genesis block hash:
+    //   12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2 (display order)
+    // Serialized (little-endian) per BOLT 0:
+    /// `ChainHash` for mainnet litecoin.
     pub const BITCOIN: Self = Self([
-        111, 226, 140, 10, 182, 241, 179, 114, 193, 166, 162, 70, 174, 99, 247, 79, 147, 30, 131,
-        101, 225, 90, 8, 156, 104, 214, 25, 0, 0, 0, 0, 0,
+        0xe2, 0xbf, 0x04, 0x7e, 0x7e, 0x5a, 0x19, 0x1a,
+        0xa4, 0xef, 0x34, 0xd3, 0x14, 0x97, 0x9d, 0xc9,
+        0x98, 0x6e, 0x0f, 0x19, 0x25, 0x1e, 0xda, 0xba,
+        0x59, 0x40, 0xfd, 0x1f, 0xe3, 0x65, 0xa7, 0x12,
     ]);
-    /// `ChainHash` for testnet3 bitcoin.
-    #[deprecated(since = "0.32.4", note = "Use TESTNET3 instead")]
-    pub const TESTNET: Self = Self([
-        67, 73, 127, 215, 248, 38, 149, 113, 8, 244, 163, 15, 217, 206, 195, 174, 186, 121, 151,
-        32, 132, 233, 14, 173, 1, 234, 51, 9, 0, 0, 0, 0,
-    ]);
-    /// `ChainHash` for testnet3 bitcoin.
-    pub const TESTNET3: Self = Self([
-        67, 73, 127, 215, 248, 38, 149, 113, 8, 244, 163, 15, 217, 206, 195, 174, 186, 121, 151,
-        32, 132, 233, 14, 173, 1, 234, 51, 9, 0, 0, 0, 0,
-    ]);
-    /// `ChainHash` for testnet4 bitcoin.
+    /// `ChainHash` for Litecoin testnet4 (the only LTC testnet).
+    /// Genesis hash: 4966625a4b2851d9fdee139e56211a0d88575f59ed816ff5e6a63deb4e3e29a0 (display order)
     pub const TESTNET4: Self = Self([
-        67, 240, 139, 218, 176, 80, 227, 91, 86, 124, 134, 75, 145, 244, 127, 80, 174, 114, 90,
-        226, 222, 83, 188, 251, 186, 242, 132, 218, 0, 0, 0, 0,
+        0xa0, 0x29, 0x3e, 0x4e, 0xeb, 0x3d, 0xa6, 0xe6,
+        0xf5, 0x6f, 0x81, 0xed, 0x59, 0x5f, 0x57, 0x88,
+        0x0d, 0x1a, 0x21, 0x56, 0x9e, 0x13, 0xee, 0xfd,
+        0xd9, 0x51, 0x28, 0x4b, 0x5a, 0x62, 0x66, 0x49,
     ]);
-    /// `ChainHash` for signet bitcoin.
+    /// `ChainHash` for signet (kept for upstream compat; not used by Litecoin).
     pub const SIGNET: Self = Self([
         246, 30, 238, 59, 99, 163, 128, 164, 119, 160, 99, 175, 50, 178, 187, 201, 124, 159, 249,
         240, 31, 44, 66, 37, 233, 115, 152, 129, 8, 0, 0, 0,
     ]);
-    /// `ChainHash` for regtest bitcoin.
+    /// `ChainHash` for Litecoin regtest.
     pub const REGTEST: Self = Self([
-        6, 34, 110, 70, 17, 26, 11, 89, 202, 175, 18, 96, 67, 235, 91, 191, 40, 195, 79, 58, 94,
-        51, 42, 31, 199, 178, 183, 60, 241, 136, 145, 15,
+        0xf9, 0x16, 0xc4, 0x56, 0xfc, 0x51, 0xdf, 0x62,
+        0x78, 0x85, 0xd7, 0xd6, 0x74, 0xed, 0x02, 0xdc,
+        0x88, 0xa2, 0x25, 0xad, 0xb3, 0xf0, 0x2a, 0xd1,
+        0x3e, 0xb4, 0x93, 0x8f, 0xf3, 0x27, 0x08, 0x53,
     ]);
 
     /// Returns the hash of the `network` genesis block for use as a chain hash.
@@ -227,7 +207,6 @@ impl ChainHash {
     pub fn using_genesis_block(params: impl AsRef<Params>) -> Self {
         match params.as_ref().network {
             Network::Bitcoin => Self::BITCOIN,
-            Network::Testnet => Self::TESTNET3,
             Network::Testnet4 => Self::TESTNET4,
             Network::Signet => Self::SIGNET,
             Network::Regtest => Self::REGTEST,
@@ -241,7 +220,6 @@ impl ChainHash {
     pub const fn using_genesis_block_const(network: Network) -> Self {
         match network {
             Network::Bitcoin => Self::BITCOIN,
-            Network::Testnet => Self::TESTNET3,
             Network::Testnet4 => Self::TESTNET4,
             Network::Signet => Self::SIGNET,
             Network::Regtest => Self::REGTEST,
@@ -273,18 +251,18 @@ mod test {
         assert_eq!(gen.input[0].previous_output.txid, Hash::all_zeros());
         assert_eq!(gen.input[0].previous_output.vout, 0xFFFFFFFF);
         assert_eq!(serialize(&gen.input[0].script_sig),
-                   hex!("4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73"));
+                   hex!("4804ffff001d0104404e592054696d65732030352f4f63742f32303131205374657665204a6f62732c204170706c65e280997320566973696f6e6172792c2044696573206174203536"));
 
         assert_eq!(gen.input[0].sequence, Sequence::MAX);
         assert_eq!(gen.output.len(), 1);
         assert_eq!(serialize(&gen.output[0].script_pubkey),
-                   hex!("434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac"));
+                   hex!("4341040184710fa689ad5023690c80f3a49c8f13f8d45b8c857fbcbc8bc4a8e4d3eb4b10f4d4604fa08dce601aaf0f470216fe1b51850b4acf21b179c45070ac7b03a9ac"));
         assert_eq!(gen.output[0].value, Amount::from_str("50 BTC").unwrap());
         assert_eq!(gen.lock_time, absolute::LockTime::ZERO);
 
         assert_eq!(
             gen.compute_wtxid().to_string(),
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
+            "97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"
         );
     }
 
@@ -308,51 +286,33 @@ mod test {
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             gen.header.merkle_root.to_string(),
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
+            "97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"
         );
 
-        assert_eq!(gen.header.time, 1231006505);
-        assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1d00ffff));
-        assert_eq!(gen.header.nonce, 2083236893);
+        assert_eq!(gen.header.time, 1317972665);
+        assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1e0ffff0));
+        assert_eq!(gen.header.nonce, 2084524493);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+            "12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2"
         );
     }
 
     #[test]
-    fn testnet_genesis_full_block() {
-        let gen = genesis_block(&params::TESTNET3);
+    fn testnet4_genesis_full_block() {
+        let gen = genesis_block(&params::TESTNET4);
         assert_eq!(gen.header.version, block::Version::ONE);
         assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
         assert_eq!(
             gen.header.merkle_root.to_string(),
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
+            "97ddfbbae6be97fd6cdf3e7ca13232a3afff2353e29badfab7f73011edd4ced9"
         );
-        assert_eq!(gen.header.time, 1296688602);
-        assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1d00ffff));
-        assert_eq!(gen.header.nonce, 414098458);
+        assert_eq!(gen.header.time, 1486949366);
+        assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1e0ffff0));
+        assert_eq!(gen.header.nonce, 293345);
         assert_eq!(
             gen.header.block_hash().to_string(),
-            "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"
-        );
-    }
-
-    #[test]
-    fn signet_genesis_full_block() {
-        let gen = genesis_block(&params::SIGNET);
-        assert_eq!(gen.header.version, block::Version::ONE);
-        assert_eq!(gen.header.prev_blockhash, Hash::all_zeros());
-        assert_eq!(
-            gen.header.merkle_root.to_string(),
-            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
-        );
-        assert_eq!(gen.header.time, 1598918400);
-        assert_eq!(gen.header.bits, CompactTarget::from_consensus(0x1e0377ae));
-        assert_eq!(gen.header.nonce, 52613770);
-        assert_eq!(
-            gen.header.block_hash().to_string(),
-            "00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6"
+            "4966625a4b2851d9fdee139e56211a0d88575f59ed816ff5e6a63deb4e3e29a0"
         );
     }
 
@@ -376,7 +336,6 @@ mod test {
         #[allow(unreachable_patterns)] // This is specifically trying to catch later added variants.
         match network {
             Network::Bitcoin => {},
-            Network::Testnet => {},
             Network::Testnet4 => {},
             Network::Signet => {},
             Network::Regtest => {},
@@ -397,17 +356,15 @@ mod test {
 
     chain_hash_genesis_block! {
         mainnet_chain_hash_genesis_block, Network::Bitcoin;
-        testnet_chain_hash_genesis_block, Network::Testnet;
         testnet4_chain_hash_genesis_block, Network::Testnet4;
-        signet_chain_hash_genesis_block, Network::Signet;
         regtest_chain_hash_genesis_block, Network::Regtest;
     }
 
-    // Test vector taken from: https://github.com/lightning/bolts/blob/master/00-introduction.md
+    // Litecoin mainnet ChainHash (storage-order hex).
     #[test]
     fn mainnet_chain_hash_test_vector() {
         let got = ChainHash::using_genesis_block_const(Network::Bitcoin).to_string();
-        let want = "6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000";
+        let want = "e2bf047e7e5a191aa4ef34d314979dc9986e0f19251edaba5940fd1fe365a712";
         assert_eq!(got, want);
     }
 }

@@ -213,18 +213,13 @@ impl Decodable for ServiceFlags {
 pub struct Magic([u8; 4]);
 
 impl Magic {
-    /// Bitcoin mainnet network magic bytes.
-    pub const BITCOIN: Self = Self([0xF9, 0xBE, 0xB4, 0xD9]);
-    /// Bitcoin testnet3 network magic bytes.
-    #[deprecated(since = "0.32.4", note = "Use TESTNET3 instead")]
-    pub const TESTNET: Self = Self([0x0B, 0x11, 0x09, 0x07]);
-    /// Bitcoin testnet3 network magic bytes.
-    pub const TESTNET3: Self = Self([0x0B, 0x11, 0x09, 0x07]);
-    /// Bitcoin testnet4 network magic bytes.
-    pub const TESTNET4: Self = Self([0x1c, 0x16, 0x3f, 0x28]);
-    /// Bitcoin signet network magic bytes.
+    /// Litecoin mainnet network magic bytes.
+    pub const BITCOIN: Self = Self([0xFB, 0xC0, 0xB6, 0xDB]);
+    /// Litecoin testnet4 network magic bytes (LTC's only testnet).
+    pub const TESTNET4: Self = Self([0xFD, 0xD2, 0xC8, 0xF1]);
+    /// Signet magic bytes (kept for upstream compat; not used by Litecoin).
     pub const SIGNET: Self = Self([0x0A, 0x03, 0xCF, 0x40]);
-    /// Bitcoin regtest network magic bytes.
+    /// Litecoin regtest network magic bytes.
     pub const REGTEST: Self = Self([0xFA, 0xBF, 0xB5, 0xDA]);
 
     /// Create network magic from bytes.
@@ -253,7 +248,6 @@ impl From<Network> for Magic {
         match network {
             // Note: new network entries must explicitly be matched in `try_from` below.
             Network::Bitcoin => Magic::BITCOIN,
-            Network::Testnet => Magic::TESTNET3,
             Network::Testnet4 => Magic::TESTNET4,
             Network::Signet => Magic::SIGNET,
             Network::Regtest => Magic::REGTEST,
@@ -268,7 +262,6 @@ impl TryFrom<Magic> for Network {
         match magic {
             // Note: any new network entries must be matched against here.
             Magic::BITCOIN => Ok(Network::Bitcoin),
-            Magic::TESTNET3 => Ok(Network::Testnet),
             Magic::TESTNET4 => Ok(Network::Testnet4),
             Magic::SIGNET => Ok(Network::Signet),
             Magic::REGTEST => Ok(Network::Regtest),
@@ -427,9 +420,8 @@ mod tests {
     #[test]
     fn magic_from_str() {
         let known_network_magic_strs = [
-            ("f9beb4d9", Network::Bitcoin),
-            ("0b110907", Network::Testnet),
-            ("1c163f28", Network::Testnet4),
+            ("fbc0b6db", Network::Bitcoin),
+            ("fdd2c8f1", Network::Testnet4),
             ("fabfb5da", Network::Regtest),
             ("0a03cf40", Network::Signet),
         ];

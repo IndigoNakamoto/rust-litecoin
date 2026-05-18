@@ -14,6 +14,7 @@ use hashes::{sha256d, Hash, HashEngine};
 use io::{Read, Write};
 
 use super::Weight;
+use crate::blockdata::mimblewimble::{self, read_compact_varint, write_compact_varint};
 use crate::blockdata::script;
 use crate::blockdata::transaction::{Transaction, Txid, Wtxid};
 use crate::consensus::{encode, Decodable, Encodable, Params};
@@ -217,6 +218,101 @@ impl Decodable for Version {
 
 /// Bitcoin block.
 ///
+/// Litecoin MWEB extension-block header.
+///
+/// Wire format (per `litecoind` `Stream::operator<<(mw::Header)`):
+///   * `height` — compact varint (signed semantically; encoded as u64)
+///   * `output_root`, `kernel_root`, `leafset_root` — 32-byte hashes
+///   * `kernel_offset`, `stealth_offset` — 32-byte blinding factors
+///   * `output_mmr_size`, `kernel_mmr_size` — compact varints
+///
+/// Earlier ports of this code skipped a "0x82 prefix" byte; that value is in fact the high byte
+/// of the height's two-byte compact varint and must be consumed as part of decoding `height`.
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct MwebBlockHeader {
+    /// MWEB extension-block height. Note: this is the height of the **MW chain**, which is
+    /// independent of the canonical block height.
+    pub height: u32,
+    /// Root of the output MMR.
+    pub output_root: [u8; 32],
+    /// Root of the kernel MMR.
+    pub kernel_root: [u8; 32],
+    /// Root of the leafset bitmap.
+    pub leafset_root: [u8; 32],
+    /// Sum of kernel blinding factors.
+    pub kernel_offset: [u8; 32],
+    /// Sum of stealth-key blinding factors.
+    pub stealth_offset: [u8; 32],
+    /// Total number of MWEB outputs ever created.
+    pub output_mmr_size: u64,
+    /// Total number of MWEB kernels ever produced.
+    pub kernel_mmr_size: u64,
+}
+
+/// A Litecoin MWEB extension block.
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct MwebBlock {
+    /// The MWEB extension block header.
+    pub header: MwebBlockHeader,
+    /// Aggregated MimbleWimble transaction body for this block (inputs, outputs, kernels).
+    pub tx_body: mimblewimble::TxBody,
+}
+
+impl Encodable for MwebBlockHeader {
+    fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        let mut len = 0;
+        len += write_compact_varint(self.height as u64, w)?;
+        // (u32→u64 cast is loss-free; encoder cannot fail on height.)
+        len += self.output_root.consensus_encode(w)?;
+        len += self.kernel_root.consensus_encode(w)?;
+        len += self.leafset_root.consensus_encode(w)?;
+        len += self.kernel_offset.consensus_encode(w)?;
+        len += self.stealth_offset.consensus_encode(w)?;
+        len += write_compact_varint(self.output_mmr_size, w)?;
+        len += write_compact_varint(self.kernel_mmr_size, w)?;
+        Ok(len)
+    }
+}
+
+impl Decodable for MwebBlockHeader {
+    fn consensus_decode_from_finite_reader<R: Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
+        let raw_height = read_compact_varint(r)?;
+        let height = u32::try_from(raw_height)
+            .map_err(|_| encode::Error::ParseFailed("MwebBlockHeader height out of range"))?;
+        Ok(MwebBlockHeader {
+            height,
+            output_root: Decodable::consensus_decode(r)?,
+            kernel_root: Decodable::consensus_decode(r)?,
+            leafset_root: Decodable::consensus_decode(r)?,
+            kernel_offset: Decodable::consensus_decode(r)?,
+            stealth_offset: Decodable::consensus_decode(r)?,
+            output_mmr_size: read_compact_varint(r)?,
+            kernel_mmr_size: read_compact_varint(r)?,
+        })
+    }
+}
+
+impl Encodable for MwebBlock {
+    fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        let mut len = 0;
+        len += self.header.consensus_encode(w)?;
+        len += self.tx_body.consensus_encode(w)?;
+        Ok(len)
+    }
+}
+
+impl Decodable for MwebBlock {
+    fn consensus_decode_from_finite_reader<R: Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
+        let header = MwebBlockHeader::consensus_decode_from_finite_reader(r)?;
+        let tx_body = mimblewimble::TxBody::consensus_decode_from_finite_reader(r)?;
+        Ok(MwebBlock { header, tx_body })
+    }
+}
+
 /// A collection of transactions with an attached proof of work.
 ///
 /// See [Bitcoin Wiki: Block][wiki-block] for more information.
@@ -234,9 +330,68 @@ pub struct Block {
     pub header: Header,
     /// List of transactions contained in the block
     pub txdata: Vec<Transaction>,
+    /// Litecoin MWEB extension block, present when the last `txdata` entry is a HogEx
+    /// transaction and the following byte is `0x01`. Skipped under serde — MWEB blocks are
+    /// consensus-encoded only.
+    #[cfg_attr(feature = "serde", serde(skip, default))]
+    pub mweb_block: Option<MwebBlock>,
 }
 
-impl_consensus_encoding!(Block, header, txdata);
+/// Block-header version bit that signals the presence of an MWEB extension block.
+/// Matches `mwebVer` in ltcsuite (`wire/msgblock.go`).
+const MWEB_VERSION_BIT: i32 = 0x2000_0000;
+
+fn block_carries_mweb(version: Version, txdata: &[Transaction]) -> bool {
+    txdata.len() >= 2
+        && (version.to_consensus() & MWEB_VERSION_BIT) != 0
+        && txdata.last().map(|t| t.is_hog_ex).unwrap_or(false)
+}
+
+impl Encodable for Block {
+    fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        let mut len = 0;
+        len += self.header.consensus_encode(w)?;
+        len += self.txdata.consensus_encode(w)?;
+        // Only blocks that signal MWEB via the header version bit AND end with a HogEx
+        // transaction may carry an MWEB extension. Without both, the presence byte is omitted.
+        if block_carries_mweb(self.header.version, &self.txdata) {
+            match &self.mweb_block {
+                Some(mw) => {
+                    len += 1u8.consensus_encode(w)?;
+                    len += mw.consensus_encode(w)?;
+                }
+                None => {
+                    len += 0u8.consensus_encode(w)?;
+                }
+            }
+        }
+        Ok(len)
+    }
+}
+
+impl Decodable for Block {
+    fn consensus_decode_from_finite_reader<R: Read + ?Sized>(
+        r: &mut R,
+    ) -> Result<Self, encode::Error> {
+        let header = Header::consensus_decode_from_finite_reader(r)?;
+        let txdata = Vec::<Transaction>::consensus_decode_from_finite_reader(r)?;
+        // HogEx, if present, must be the last transaction in the block.
+        if txdata.iter().take(txdata.len().saturating_sub(1)).any(|t| t.is_hog_ex) {
+            return Err(encode::Error::ParseFailed("HogEx must be the last transaction"));
+        }
+        let mweb_block = if block_carries_mweb(header.version, &txdata) {
+            let present = u8::consensus_decode_from_finite_reader(r)?;
+            if present != 0 {
+                Some(MwebBlock::consensus_decode_from_finite_reader(r)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        Ok(Block { header, txdata, mweb_block })
+    }
+}
 
 impl Block {
     /// Returns the block hash.
@@ -540,8 +695,10 @@ mod tests {
             real_decode.header.validate_pow(real_decode.header.target()).unwrap(),
             real_decode.block_hash()
         );
-        assert_eq!(real_decode.header.difficulty(&params), 1);
-        assert_eq!(real_decode.header.difficulty_float(), 1.0);
+        // The block data is from Bitcoin; under Litecoin's pow_limit (0x1e0ffff0) the same
+        // bits 0x1d00ffff yield difficulty 4096 because LTC's max target is 1/4096th of BTC's.
+        assert_eq!(real_decode.header.difficulty(&params), 4096);
+        assert_eq!(real_decode.header.difficulty_float(), 4096.0);
 
         assert_eq!(real_decode.total_size(), some_block.len());
         assert_eq!(real_decode.base_size(), some_block.len());
@@ -559,7 +716,7 @@ mod tests {
     // Check testnet block 000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b
     #[test]
     fn segwit_block_test() {
-        let params = Params::new(Network::Testnet);
+        let params = Params::new(Network::Testnet4);
         let segwit_block = include_bytes!("../../tests/data/testnet_block_000000000000045e0b1660b6445b5e5c5ab63c9a4f956be7e1e69be04fa4497b.raw").to_vec();
 
         let decode: Result<Block, _> = deserialize(&segwit_block);
@@ -582,8 +739,11 @@ mod tests {
             real_decode.header.validate_pow(real_decode.header.target()).unwrap(),
             real_decode.block_hash()
         );
-        assert_eq!(real_decode.header.difficulty(&params), 2456598);
-        assert_eq!(real_decode.header.difficulty_float(), 2456598.4399242126);
+        // Difficulty rescaled for Litecoin testnet4 pow_limit. The integer form uses
+        // testnet4 params (pow_limit `0x1e0fffff`); the float form uses `Target::MAX`
+        // (LTC mainnet pow_limit `0x1e0ffff0`), so the two differ slightly.
+        assert_eq!(real_decode.header.difficulty(&params), 10062371153);
+        assert_eq!(real_decode.header.difficulty_float(), 10062227209.929575);
 
         assert_eq!(real_decode.total_size(), segwit_block.len());
         assert_eq!(real_decode.base_size(), 4283);

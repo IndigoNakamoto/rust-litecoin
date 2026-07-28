@@ -529,6 +529,8 @@ pub mod hex_array_opt {
 
     use hex::{DisplayHex, FromHex};
 
+    use crate::prelude::*;
+
     macro_rules! define_opt_array {
         ($mod_name:ident, $len:expr) => {
             pub mod $mod_name {

@@ -10,7 +10,8 @@ pub const MWEB_TX_OFFSET_TYPE: u8 = 0x90;
 pub const MWEB_TX_STEALTH_OFFSET_TYPE: u8 = 0x91;
 /// `MwebKernelCountType`
 pub const MWEB_KERNEL_COUNT_TYPE: u8 = 0x92;
-/// Global MWEB kernel field (`type_value=0x93`, key = `[kernel_index: u32 LE][field_ty: u8]`).
+/// Global MWEB kernel field (`type_value=0x93`, key =
+/// `[kernel_index: u32 LE][field_ty: u8]` plus optional pegout index for type 4).
 pub const MWEB_GLOBAL_KERNEL_FIELD_TYPE: u8 = 0x93;
 /// Global MWEB output field (`type_value=0x94`, key = `[output_index: u32 LE][field_ty: u8]`).
 pub const MWEB_GLOBAL_OUTPUT_FIELD_TYPE: u8 = 0x94;

@@ -3,10 +3,9 @@
 use secp256k1::PublicKey;
 
 use crate::blockdata::mimblewimble::{
-    self, Input, Kernel, Output, OutputMessage, OutputMessageStandardFields, PegOutCoin,
+    self, Input, Kernel, Output, OutputMessage, OutputMessageStandardFields,
     Transaction as MwebTransaction,
 };
-use crate::consensus::deserialize;
 use crate::prelude::*;
 use crate::psbt::Error;
 use crate::psbt::mweb::{MwebInput, MwebKernel, MwebOutput};
@@ -159,10 +158,10 @@ pub(crate) fn wire_kernel_from_map(k: &MwebKernel) -> Result<Kernel, Error> {
     let signature = k
         .signature
         .ok_or(Error::IncompleteMwebMaps("kernel map missing signature"))?;
-    let pegouts: Vec<PegOutCoin> = match &k.pegout {
-        Some(raw) => deserialize(raw).map_err(Error::ConsensusEncoding)?,
-        None => Vec::new(),
-    };
+    let mut pegouts = Vec::with_capacity(k.pegouts.len());
+    for raw in &k.pegouts {
+        pegouts.push(crate::psbt::mweb::kernel::pegout_coin_from_psbt_value(raw)?);
+    }
     let stealth_excess = match &k.stealth_commit {
         Some(b) => Some(
             PublicKey::from_slice(b)

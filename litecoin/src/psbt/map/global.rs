@@ -76,9 +76,10 @@ impl Map for Psbt {
                 value: (self.mweb_kernels.len() as u32).to_le_bytes().to_vec(),
             });
             for (i, kernel) in self.mweb_kernels.iter().enumerate() {
-                for (field_ty, value) in kernel.to_pairs() {
+                for (field_ty, key_suffix, value) in kernel.to_kv_pairs() {
                     let mut key = (i as u32).to_le_bytes().to_vec();
                     key.push(field_ty);
+                    key.extend_from_slice(&key_suffix);
                     rv.push(raw::Pair {
                         key: raw::Key {
                             type_value: MWEB_GLOBAL_KERNEL_FIELD_TYPE,
@@ -284,12 +285,13 @@ impl Psbt {
                                 return Err(Error::InvalidKey(pair.key));
                             }
                         }
-                        MWEB_GLOBAL_KERNEL_FIELD_TYPE if pair.key.key.len() == 5 => {
+                        MWEB_GLOBAL_KERNEL_FIELD_TYPE if pair.key.key.len() >= 5 => {
                             let idx = u32::from_le_bytes(pair.key.key[..4].try_into().unwrap())
                                 as usize;
                             let field_ty = pair.key.key[4];
+                            let key_data = &pair.key.key[5..];
                             mweb::ensure_index(&mut mweb_kernels, idx);
-                            mweb_kernels[idx].apply_field(field_ty, &pair.value);
+                            mweb_kernels[idx].apply_field(field_ty, key_data, &pair.value);
                         }
                         MWEB_GLOBAL_OUTPUT_FIELD_TYPE if pair.key.key.len() == 5 => {
                             let idx = u32::from_le_bytes(pair.key.key[..4].try_into().unwrap())

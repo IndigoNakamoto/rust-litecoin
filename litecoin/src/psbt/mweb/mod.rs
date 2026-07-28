@@ -17,6 +17,8 @@ mod kernel;
 mod output;
 pub mod types;
 
+use crate::prelude::Vec;
+
 pub use self::extract::assemble_mw_tx;
 pub use self::input::MwebInput;
 pub use self::kernel::{pegout_coin_from_psbt_value, pegout_psbt_value, MwebKernel};

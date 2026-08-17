@@ -76,7 +76,7 @@ pub enum AddressType {
     P2tr,
     /// Pay to anchor.
     P2a,
-    /// Litecoin MimbleWimble stealth address (`ltcmweb1…` / `tmweb1…`).
+    /// Litecoin MimbleWimble stealth address (`ltcmweb1…` / `tmweb1…` / `rmweb1…`).
     Mweb,
 }
 
@@ -151,7 +151,7 @@ enum AddressInner {
     Segwit { program: WitnessProgram, hrp: KnownHrp },
     /// Litecoin MWEB stealth address: 33-byte scan key followed by 33-byte spend key,
     /// bech32-encoded under the per-network MWEB HRP.
-    Mweb { scan: [u8; 33], spend: [u8; 33], network: NetworkKind },
+    Mweb { scan: [u8; 33], spend: [u8; 33], hrp: MwebHrp },
 }
 
 /// Formats bech32 as upper case if alternate formatting is chosen (`{:#}`).
@@ -188,7 +188,7 @@ impl fmt::Display for AddressInner {
                     litecoin_segwit_encode_lower(fmt, hrp, version, program)
                 }
             }
-            Mweb { scan, spend, network } => {
+            Mweb { scan, spend, hrp } => {
                 // ltcsuite (`ltcd/ltcutil/address.go:EncodeAddress`) prepends a version fe (0)
                 // to the bech32 data: `bech32.Encode(hrp, append([]byte{0}, converted...))`.
                 // We mirror that by chaining a leading `Fe32::Q` (value 0) into the bech32
@@ -199,7 +199,7 @@ impl fmt::Display for AddressInner {
                 let mut payload = [0u8; 66];
                 payload[..33].copy_from_slice(scan);
                 payload[33..].copy_from_slice(spend);
-                let hrp = mweb_hrp_for(*network);
+                let hrp = hrp.to_hrp();
                 let iter = payload.iter().copied().bytes_to_fes();
                 let bytes = iter
                     .with_checksum::<Bech32>(&hrp)
@@ -287,9 +287,9 @@ fn litecoin_segwit_encode_upper<W: fmt::Write>(
     Ok(())
 }
 
-/// Decode a Litecoin MWEB stealth address (`ltcmweb1…` / `tmweb1…`).
+/// Decode a Litecoin MWEB stealth address (`ltcmweb1…` / `tmweb1…` / `rmweb1…`).
 ///
-/// Returns `(scan, spend, network)` on success. Wire format (per ltcsuite
+/// Returns `(scan, spend, hrp)` on success. Wire format (per ltcsuite
 /// `ltcd/ltcutil/address.go:EncodeAddress` and Litecoin Core `mw::StealthAddress::Encode`):
 ///   * bech32 (NOT bech32m) checksum over the per-network MWEB HRP
 ///   * 1-fe5 leading version field (always `0` today)
@@ -297,16 +297,18 @@ fn litecoin_segwit_encode_upper<W: fmt::Write>(
 ///   * 6-fe5 checksum
 ///
 /// Both halves are validated as compressed secp256k1 public keys.
-fn litecoin_mweb_decode(s: &str) -> Option<([u8; 33], [u8; 33], NetworkKind)> {
+fn litecoin_mweb_decode(s: &str) -> Option<([u8; 33], [u8; 33], MwebHrp)> {
     use bech32::primitives::decode::UncheckedHrpstring;
     use bech32::{Bech32, Fe32IterExt};
 
     let unchecked = UncheckedHrpstring::new(s).ok()?;
     let hrp = unchecked.hrp();
-    let network = if hrp == HRP_LTCMWEB {
-        NetworkKind::Main
+    let hrp = if hrp == HRP_LTCMWEB {
+        MwebHrp::Mainnet
     } else if hrp == HRP_TMWEB {
-        NetworkKind::Test
+        MwebHrp::Testnets
+    } else if hrp == HRP_RMWEB {
+        MwebHrp::Regtest
     } else {
         return None;
     };
@@ -333,7 +335,7 @@ fn litecoin_mweb_decode(s: &str) -> Option<([u8; 33], [u8; 33], NetworkKind)> {
     // ltcsuite's `secp256k1.ParsePubKey` calls in `decodeAddressMweb`.
     secp256k1::PublicKey::from_slice(&scan).ok()?;
     secp256k1::PublicKey::from_slice(&spend).ok()?;
-    Some((scan, spend, network))
+    Some((scan, spend, hrp))
 }
 
 /// Try-both-checksum segwit decoder. We can't use `bech32::segwit::decode` because it always
@@ -402,17 +404,61 @@ const HRP_RLTC: Hrp = Hrp::parse_unchecked("rltc");
 
 /// Litecoin MWEB stealth-address HRP: mainnet (`ltcmweb`).
 const HRP_LTCMWEB: Hrp = Hrp::parse_unchecked("ltcmweb");
-/// Litecoin MWEB stealth-address HRP: testnet4 / regtest (`tmweb`).
+/// Litecoin MWEB stealth-address HRP: testnet4 / signet (`tmweb`).
 const HRP_TMWEB: Hrp = Hrp::parse_unchecked("tmweb");
+/// Litecoin MWEB stealth-address HRP: regtest (`rmweb`). Core v24+; 0.21 used `tmweb`.
+const HRP_RMWEB: Hrp = Hrp::parse_unchecked("rmweb");
 
-/// Returns the MWEB stealth-address HRP for the given network kind.
+/// Known MWEB stealth-address human-readable parts.
 ///
-/// Per `litecoin/src/chainparams.cpp`: mainnet uses `ltcmweb`; testnet4 and regtest both use
-/// `tmweb`.
-fn mweb_hrp_for(network: NetworkKind) -> Hrp {
-    match network {
-        NetworkKind::Main => HRP_LTCMWEB,
-        NetworkKind::Test => HRP_TMWEB,
+/// Parallel to [`KnownHrp`] for segwit. Core v24 split regtest (`rmweb`) from
+/// testnet4/signet (`tmweb`). [`NetworkKind::Test`] still maps to [`Self::Testnets`]
+/// (`tmweb`) so existing testnet vectors stay stable; pass [`Network::Regtest`]
+/// to encode `rmweb`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum MwebHrp {
+    /// Mainnet (`ltcmweb`).
+    Mainnet,
+    /// Testnet4 and signet (`tmweb`).
+    Testnets,
+    /// Regtest (`rmweb`).
+    Regtest,
+}
+
+impl MwebHrp {
+    /// Creates a `MwebHrp` from `network`.
+    fn from_network(network: Network) -> Self {
+        use Network::*;
+
+        match network {
+            Bitcoin => Self::Mainnet,
+            Testnet4 | Signet => Self::Testnets,
+            Regtest => Self::Regtest,
+        }
+    }
+
+    /// Converts, infallibly, a known MWEB HRP to a [`bech32::Hrp`].
+    fn to_hrp(self) -> Hrp {
+        match self {
+            Self::Mainnet => HRP_LTCMWEB,
+            Self::Testnets => HRP_TMWEB,
+            Self::Regtest => HRP_RMWEB,
+        }
+    }
+}
+
+impl From<Network> for MwebHrp {
+    fn from(n: Network) -> Self { Self::from_network(n) }
+}
+
+impl From<NetworkKind> for MwebHrp {
+    fn from(k: NetworkKind) -> Self {
+        match k {
+            NetworkKind::Main => Self::Mainnet,
+            // Test-kind without a specific [`Network`] is testnet, not v24 regtest.
+            NetworkKind::Test => Self::Testnets,
+        }
     }
 }
 
@@ -712,16 +758,19 @@ impl Address {
     ///
     /// Accepting [`secp256k1::PublicKey`] forces both halves to be on-curve compressed points,
     /// matching ltcsuite's `secp256k1.ParsePubKey` validation in `NewAddressMweb`.
+    ///
+    /// Pass [`Network::Regtest`] (or [`MwebHrp::Regtest`]) for Core v24+ `rmweb`.
+    /// [`NetworkKind::Test`] still encodes `tmweb`.
     pub fn mweb(
         scan: secp256k1::PublicKey,
         spend: secp256k1::PublicKey,
-        network: impl Into<NetworkKind>,
+        hrp: impl Into<MwebHrp>,
     ) -> Address {
         Address(
             AddressInner::Mweb {
                 scan: scan.serialize(),
                 spend: spend.serialize(),
-                network: network.into(),
+                hrp: hrp.into(),
             },
             PhantomData,
         )
@@ -761,7 +810,7 @@ impl Address {
             AddressInner::P2pkh { hash, network: _ } => P2pkh { pubkey_hash: hash },
             AddressInner::P2sh { hash, network: _ } => P2sh { script_hash: hash },
             AddressInner::Segwit { program, hrp: _ } => Segwit { witness_program: program },
-            AddressInner::Mweb { scan, spend, network: _ } => Mweb { scan, spend },
+            AddressInner::Mweb { scan, spend, hrp: _ } => Mweb { scan, spend },
         }
     }
 
@@ -980,7 +1029,7 @@ impl Address<NetworkUnchecked> {
             P2pkh { hash: _, ref network } => *network == NetworkKind::from(n),
             P2sh { hash: _, ref network } => *network == NetworkKind::from(n),
             Segwit { program: _, ref hrp } => *hrp == KnownHrp::from_network(n),
-            Mweb { scan: _, spend: _, ref network } => *network == NetworkKind::from(n),
+            Mweb { scan: _, spend: _, ref hrp } => *hrp == MwebHrp::from_network(n),
         }
     }
 
@@ -1072,11 +1121,11 @@ impl FromStr for Address<NetworkUnchecked> {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Address<NetworkUnchecked>, ParseError> {
-        // Litecoin MWEB stealth addresses (`ltcmweb1…` / `tmweb1…`) use a bech32 payload of 66
-        // bytes (scan ∥ spend pubkeys). They share the bech32 family but are distinct from
-        // BIP-141 witness addresses, so check for the MWEB HRPs first.
-        if let Some((scan, spend, network)) = litecoin_mweb_decode(s) {
-            let inner = AddressInner::Mweb { scan, spend, network };
+        // Litecoin MWEB stealth addresses (`ltcmweb1…` / `tmweb1…` / `rmweb1…`) use a bech32
+        // payload of 66 bytes (scan ∥ spend pubkeys). They share the bech32 family but are
+        // distinct from BIP-141 witness addresses, so check for the MWEB HRPs first.
+        if let Some((scan, spend, hrp)) = litecoin_mweb_decode(s) {
+            let inner = AddressInner::Mweb { scan, spend, hrp };
             return Ok(Address(inner, PhantomData));
         }
 
@@ -1362,6 +1411,47 @@ mod tests {
             testnet_encoded.parse::<Address<NetworkUnchecked>>().is_err(),
             "checksum-busted HRP swap must not parse"
         );
+    }
+
+    #[test]
+    fn test_mweb_regtest_hrp_is_rmweb() {
+        use crate::hex::FromHex;
+        let scan_bytes: [u8; 33] = <[u8; 33]>::from_hex(
+            "0339a36013301597daef41fbe593a02cc513d0b55527ec2df1050e2e8ff49c85c2",
+        )
+        .expect("scan hex");
+        let spend_bytes: [u8; 33] = <[u8; 33]>::from_hex(
+            "035a784662a4a20a65bf6aab9ae98a6c068a81c52e4b032c0fb5400c706cfccc56",
+        )
+        .expect("spend hex");
+        let scan = secp256k1::PublicKey::from_slice(&scan_bytes).expect("scan on-curve");
+        let spend = secp256k1::PublicKey::from_slice(&spend_bytes).expect("spend on-curve");
+
+        let regtest = Address::mweb(scan, spend, Network::Regtest);
+        let encoded = regtest.to_string();
+        assert!(
+            encoded.starts_with("rmweb1"),
+            "expected rmweb HRP for Network::Regtest, got {}",
+            encoded
+        );
+        let parsed: Address<NetworkUnchecked> = encoded.parse().expect("parse rmweb");
+        assert!(parsed.is_valid_for_network(Network::Regtest));
+        assert!(!parsed.is_valid_for_network(Network::Testnet4));
+        assert!(!parsed.is_valid_for_network(Network::Bitcoin));
+        assert_eq!(parsed.require_network(Network::Regtest).unwrap(), regtest);
+
+        // NetworkKind::Test stays on the testnet HRP (tmweb), not v24 regtest.
+        let testnet = Address::mweb(scan, spend, NetworkKind::Test);
+        let tmweb = testnet.to_string();
+        assert!(
+            tmweb.starts_with("tmweb1"),
+            "expected tmweb HRP for NetworkKind::Test, got {}",
+            tmweb
+        );
+        let tmweb_parsed: Address<NetworkUnchecked> = tmweb.parse().expect("parse tmweb");
+        assert!(tmweb_parsed.is_valid_for_network(Network::Testnet4));
+        assert!(tmweb_parsed.is_valid_for_network(Network::Signet));
+        assert!(!tmweb_parsed.is_valid_for_network(Network::Regtest));
     }
 
     #[test]

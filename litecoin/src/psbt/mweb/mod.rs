@@ -2,14 +2,12 @@
 
 //! ltcsuite-compatible PSBT MWEB key types and maps.
 //!
-//! Key codes match [`ltcsuite/ltcd` `ltcutil/psbt/types.go`](https://github.com/ltcsuite/ltcd/blob/master/ltcutil/psbt/types.go)
-//! (first-class `0x90+` types — not BIP174 `0xFC` proprietary blobs).
+//! Key codes match LIP-0007 / Core v24 (same numeric map as ltcd `types.go` except
+//! `0x96` is the ASCII `mweb()` descriptor and `0x9A`/`0x9B` are reserved on emit).
 //!
-//! Global kernel fields use `type_value = 0x93` with key
-//! `[kernel_index: u32 LE][field_ty: u8][optional pegout_index]`.
-//! Parallel pure-MWEB input/output maps (when `unsigned_tx` has no matching vin/vout slots) use
-//! global keys: input fields as `type_value = field` with 4-byte index key; output fields as
-//! `type_value = 0x94` with 5-byte `[index][field_ty]` key.
+//! Serialize is PSBTv2: kernel maps are a trailing section; MWEB input/output maps
+//! follow canonical maps. v0 global `0x93`/`0x94` indexed keys are still *accepted*
+//! on parse for 0.21-era / ltcd fixtures.
 
 mod extract;
 mod input;
@@ -66,7 +64,7 @@ mod tests {
                 c
             }),
             amount: Some(50_000),
-            address_index: Some(2),
+            address_descriptor: Some("mweb([aabbccdd/0'/100'/0']x,[aabbccdd/0'/100'/1']y,2)".into()),
             features: Some(1),
             ..MwebInput::default()
         };
@@ -74,14 +72,15 @@ mod tests {
         assert_eq!(back.output_id, inp.output_id);
         assert_eq!(back.commit, inp.commit);
         assert_eq!(back.amount, inp.amount);
-        assert_eq!(back.address_index, inp.address_index);
+        assert_eq!(back.address_descriptor, inp.address_descriptor);
+        assert_eq!(back.address_index, None);
         assert_eq!(back.features, inp.features);
     }
 
     #[test]
-    fn mweb_input_key_origin_ltcd_wire() {
+    fn mweb_input_four_byte_index_ignored_origins_ingest_only() {
         use crate::bip32::{ChildNumber, DerivationPath, Fingerprint};
-        use crate::psbt::serialize::{Deserialize, Serialize};
+        use crate::psbt::serialize::Serialize;
 
         let sk = SecretKey::from_slice(&[7u8; 32]).unwrap();
         let pk = sk.public_key(&Secp256k1::new());
@@ -93,40 +92,35 @@ mod tests {
         ]
         .into();
         let ks = (fingerprint, path);
+        let spend_path: DerivationPath = vec![
+            ChildNumber::from_hardened_idx(0).unwrap(),
+            ChildNumber::from_hardened_idx(100).unwrap(),
+            ChildNumber::from_hardened_idx(1).unwrap(),
+        ]
+        .into();
 
-        let inp = MwebInput {
-            address_index: Some(3),
-            master_scan_key_origin: Some((pk, ks.clone())),
-            master_spend_key_origin: Some((pk, {
-                let spend_path: DerivationPath = vec![
-                    ChildNumber::from_hardened_idx(0).unwrap(),
-                    ChildNumber::from_hardened_idx(100).unwrap(),
-                    ChildNumber::from_hardened_idx(1).unwrap(),
-                ]
-                .into();
-                (fingerprint, spend_path)
-            })),
-            ..MwebInput::default()
-        };
-        inp.validate_key_origins().unwrap();
+        // ltcd-shaped ingest: 4-byte 0x96 + origins. Index is ignored; origins parse.
+        let ingested = MwebInput::from_kv_pairs([
+            (MWEB_ADDRESS_INDEX_TYPE, Vec::new(), 3u32.to_le_bytes().to_vec()),
+            (MWEB_MASTER_SCAN_KEY_ORIGIN_TYPE, pk.serialize().to_vec(), ks.serialize()),
+            (
+                MWEB_MASTER_SPEND_KEY_ORIGIN_TYPE,
+                pk.serialize().to_vec(),
+                (fingerprint, spend_path).serialize(),
+            ),
+        ]);
+        assert_eq!(ingested.address_index, None);
+        assert_eq!(ingested.address_descriptor, None);
+        assert!(ingested.master_scan_key_origin.is_some());
+        assert!(ingested.master_spend_key_origin.is_some());
 
-        let pairs = inp.to_kv_pairs();
-        let scan = pairs
-            .iter()
-            .find(|(ty, _, _)| *ty == MWEB_MASTER_SCAN_KEY_ORIGIN_TYPE)
-            .unwrap();
-        assert_eq!(scan.1, pk.serialize().to_vec());
-        // Value is BIP174 KeySource: fingerprint || LE child indexes
-        assert_eq!(scan.2, ks.serialize());
-        assert_eq!(
-            <(Fingerprint, DerivationPath) as Deserialize>::deserialize(&scan.2).unwrap(),
-            ks
-        );
-
-        let back = MwebInput::from_kv_pairs(inp.to_kv_pairs());
-        assert_eq!(back.master_scan_key_origin, inp.master_scan_key_origin);
-        assert_eq!(back.master_spend_key_origin, inp.master_spend_key_origin);
-        assert_eq!(back.address_index, Some(3));
+        // LIP-0007: origins and the 4-byte index are not re-emitted.
+        let emitted = ingested.to_kv_pairs();
+        assert!(emitted.iter().all(|(ty, _, _)| {
+            *ty != MWEB_MASTER_SCAN_KEY_ORIGIN_TYPE
+                && *ty != MWEB_MASTER_SPEND_KEY_ORIGIN_TYPE
+                && *ty != MWEB_ADDRESS_INDEX_TYPE
+        }));
     }
 
     #[test]

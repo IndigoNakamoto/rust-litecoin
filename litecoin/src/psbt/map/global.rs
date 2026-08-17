@@ -9,6 +9,7 @@ use crate::consensus::{encode, Decodable};
 use crate::prelude::*;
 use crate::psbt::map::Map;
 use crate::psbt::mweb::{self, types::*};
+use crate::psbt::v2::{self, GlobalMeta, PSBT_GLOBAL_FALLBACK_LOCKTIME, PSBT_GLOBAL_INPUT_COUNT, PSBT_GLOBAL_OUTPUT_COUNT, PSBT_GLOBAL_TX_VERSION};
 use crate::psbt::{raw, Error, Psbt};
 
 /// Type: Unsigned Transaction PSBT_GLOBAL_UNSIGNED_TX = 0x00
@@ -137,7 +138,7 @@ impl Map for Psbt {
 }
 
 impl Psbt {
-    pub(crate) fn decode_global<R: Read + ?Sized>(r: &mut R) -> Result<Self, Error> {
+    pub(crate) fn decode_global<R: Read + ?Sized>(r: &mut R) -> Result<(Self, GlobalMeta), Error> {
         let mut r = r.take(MAX_VEC_SIZE as u64);
         let mut tx: Option<Transaction> = None;
         let mut version: Option<u32> = None;
@@ -149,6 +150,11 @@ impl Psbt {
         let mut mweb_kernels: Vec<mweb::MwebKernel> = Vec::new();
         let mut mweb_inputs: Vec<mweb::MwebInput> = Vec::new();
         let mut mweb_outputs: Vec<mweb::MwebOutput> = Vec::new();
+        let mut tx_version: Option<i32> = None;
+        let mut fallback_locktime: Option<u32> = None;
+        let mut v2_input_count: Option<usize> = None;
+        let mut v2_output_count: Option<usize> = None;
+        let mut v2_kernel_count: usize = 0;
 
         loop {
             match raw::Pair::decode(&mut r) {
@@ -234,11 +240,9 @@ impl Psbt {
                                         ));
                                     }
                                     version = Some(Decodable::consensus_decode(&mut decoder)?);
-                                    // We only understand version 0 PSBTs. According to BIP-174 we
-                                    // should throw an error if we see anything other than version 0.
-                                    if version != Some(0) {
+                                    if version != Some(0) && version != Some(2) {
                                         return Err(Error::Version(
-                                            "PSBT versions greater than 0 are not supported",
+                                            "unsupported PSBT version (want 0 or 2)",
                                         ));
                                     }
                                 } else {
@@ -279,11 +283,44 @@ impl Psbt {
                             off.copy_from_slice(&pair.value);
                             mweb_stealth_offset = Some(off);
                         }
+                        PSBT_GLOBAL_TX_VERSION if pair.key.key.is_empty() && pair.value.len() == 4 => {
+                            tx_version = Some(i32::from_le_bytes(pair.value[..4].try_into().unwrap()));
+                        }
+                        PSBT_GLOBAL_FALLBACK_LOCKTIME
+                            if pair.key.key.is_empty() && pair.value.len() == 4 =>
+                        {
+                            fallback_locktime =
+                                Some(u32::from_le_bytes(pair.value[..4].try_into().unwrap()));
+                        }
+                        PSBT_GLOBAL_INPUT_COUNT if pair.key.key.is_empty() => {
+                            let n = if pair.value.len() == 4 {
+                                u32::from_le_bytes(pair.value[..4].try_into().unwrap()) as u64
+                            } else {
+                                encode::deserialize::<crate::VarInt>(&pair.value)
+                                    .map_err(|_| Error::InvalidKey(pair.key.clone()))?
+                                    .0
+                            };
+                            v2_input_count = Some(n as usize);
+                        }
+                        PSBT_GLOBAL_OUTPUT_COUNT if pair.key.key.is_empty() => {
+                            let n = if pair.value.len() == 4 {
+                                u32::from_le_bytes(pair.value[..4].try_into().unwrap()) as u64
+                            } else {
+                                encode::deserialize::<crate::VarInt>(&pair.value)
+                                    .map_err(|_| Error::InvalidKey(pair.key.clone()))?
+                                    .0
+                            };
+                            v2_output_count = Some(n as usize);
+                        }
                         MWEB_KERNEL_COUNT_TYPE if pair.key.key.is_empty() => {
-                            // Count is informational; kernel maps come from `0x93` pairs.
-                            if pair.value.len() != 4 {
-                                return Err(Error::InvalidKey(pair.key));
-                            }
+                            // Core / LIP-0007: CompactSize. Accept 4-byte LE for older ltcd packets.
+                            v2_kernel_count = if pair.value.len() == 4 {
+                                u32::from_le_bytes(pair.value[..4].try_into().unwrap()) as usize
+                            } else {
+                                encode::deserialize::<crate::VarInt>(&pair.value)
+                                    .map_err(|_| Error::InvalidKey(pair.key.clone()))?
+                                    .0 as usize
+                            };
                         }
                         MWEB_GLOBAL_KERNEL_FIELD_TYPE if pair.key.key.len() >= 5 => {
                             let idx = u32::from_le_bytes(pair.key.key[..4].try_into().unwrap())
@@ -323,10 +360,36 @@ impl Psbt {
             }
         }
 
-        if let Some(tx) = tx {
-            Ok(Psbt {
-                unsigned_tx: tx,
-                version: version.unwrap_or(0),
+        let is_v2 = version == Some(2)
+            || tx_version.is_some()
+            || v2_input_count.is_some()
+            || v2_output_count.is_some();
+
+        let (unsigned_tx, input_count, output_count) = if let Some(tx) = tx {
+            let n_in = tx.input.len();
+            let n_out = tx.output.len();
+            (tx, n_in, n_out)
+        } else if is_v2 {
+            let n_in = v2_input_count.unwrap_or(0);
+            let n_out = v2_output_count.unwrap_or(0);
+            (
+                v2::dummy_tx(
+                    tx_version.unwrap_or(2),
+                    fallback_locktime.unwrap_or(0),
+                    n_in,
+                    n_out,
+                ),
+                n_in,
+                n_out,
+            )
+        } else {
+            return Err(Error::MustHaveUnsignedTx);
+        };
+
+        Ok((
+            Psbt {
+                unsigned_tx,
+                version: version.unwrap_or(if is_v2 { 2 } else { 0 }),
                 xpub: xpub_map,
                 proprietary,
                 unknown: unknowns,
@@ -337,9 +400,8 @@ impl Psbt {
                 mweb_outputs,
                 inputs: vec![],
                 outputs: vec![],
-            })
-        } else {
-            Err(Error::MustHaveUnsignedTx)
-        }
+            },
+            GlobalMeta { input_count, output_count, kernel_count: v2_kernel_count, is_v2 },
+        ))
     }
 }

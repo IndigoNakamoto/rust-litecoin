@@ -4,7 +4,7 @@ use crate::bip32::KeySource;
 use crate::prelude::*;
 use crate::psbt::mweb::types::*;
 use crate::psbt::raw;
-use crate::psbt::serialize::{Deserialize as PsbtDeserialize, Serialize as PsbtSerialize};
+use crate::psbt::serialize::Deserialize as PsbtDeserialize;
 use crate::psbt::Error;
 
 /// MWEB fields for one PSBT input (ltcd `PInput` MWEB subset).
@@ -28,8 +28,10 @@ pub struct MwebInput {
     pub features: Option<u8>,
     /// Input signature.
     pub signature: Option<Vec<u8>>,
-    /// Address index.
+    /// Wallet-internal address index (not serialized as `0x96`; LIP-0007 uses the descriptor).
     pub address_index: Option<u32>,
+    /// LIP-0007 `PSBT_IN_MWEB_ADDR_DESCRIPTOR` — ASCII `mweb(...)`.
+    pub address_descriptor: Option<String>,
     /// Amount litoshis.
     pub amount: Option<u64>,
     /// Shared secret.
@@ -47,8 +49,8 @@ pub struct MwebInput {
 impl MwebInput {
     /// Encode as PSBT `(type, key_data, value)` triples.
     ///
-    /// Most MWEB fields use empty `key_data`. Origins `0x9A`/`0x9B` use compressed pubkey
-    /// as key data and BIP174 KeySource bytes as value (ltcd `partial_input.go`).
+    /// LIP-0007: `0x96` is the ASCII descriptor; `0x9A`/`0x9B` are reserved and not emitted.
+    /// Origins are still *accepted* on parse for ltcd fixture ingest.
     pub fn to_kv_pairs(&self) -> Vec<(u8, Vec<u8>, Vec<u8>)> {
         let mut pairs = Vec::new();
         if let Some(id) = self.output_id {
@@ -69,8 +71,12 @@ impl MwebInput {
         if let Some(ref s) = self.signature {
             pairs.push((MWEB_INPUT_SIGNATURE_TYPE, Vec::new(), s.clone()));
         }
-        if let Some(i) = self.address_index {
-            pairs.push((MWEB_ADDRESS_INDEX_TYPE, Vec::new(), i.to_le_bytes().to_vec()));
+        if let Some(ref desc) = self.address_descriptor {
+            pairs.push((
+                MWEB_ADDR_DESCRIPTOR_TYPE,
+                Vec::new(),
+                desc.as_bytes().to_vec(),
+            ));
         }
         if let Some(a) = self.amount {
             pairs.push((MWEB_INPUT_AMOUNT_TYPE, Vec::new(), a.to_le_bytes().to_vec()));
@@ -80,20 +86,6 @@ impl MwebInput {
         }
         if let Some(ref p) = self.key_exchange_pubkey {
             pairs.push((MWEB_KEY_EXCHANGE_PUBKEY_TYPE, Vec::new(), p.clone()));
-        }
-        if let Some((ref pk, ref ks)) = self.master_scan_key_origin {
-            pairs.push((
-                MWEB_MASTER_SCAN_KEY_ORIGIN_TYPE,
-                pk.serialize().to_vec(),
-                PsbtSerialize::serialize(ks),
-            ));
-        }
-        if let Some((ref pk, ref ks)) = self.master_spend_key_origin {
-            pairs.push((
-                MWEB_MASTER_SPEND_KEY_ORIGIN_TYPE,
-                pk.serialize().to_vec(),
-                PsbtSerialize::serialize(ks),
-            ));
         }
         if let Some(ref e) = self.extra_data {
             pairs.push((MWEB_INPUT_EXTRA_DATA_TYPE, Vec::new(), e.clone()));
@@ -139,7 +131,14 @@ impl MwebInput {
                 self.signature = Some(value.to_vec())
             }
             MWEB_ADDRESS_INDEX_TYPE if key_data.is_empty() && value.len() == 4 => {
-                self.address_index = Some(u32::from_le_bytes(value[..4].try_into().unwrap()));
+                // LIP-0007: silently ignore the pre-descriptor 4-byte index.
+            }
+            MWEB_ADDRESS_INDEX_TYPE if key_data.is_empty() => {
+                if let Ok(s) = core::str::from_utf8(value) {
+                    if s.starts_with("mweb(") && s.bytes().all(|c| (0x20..=0x7e).contains(&c)) {
+                        self.address_descriptor = Some(s.to_owned());
+                    }
+                }
             }
             MWEB_INPUT_AMOUNT_TYPE if key_data.is_empty() && value.len() == 8 => {
                 self.amount = Some(u64::from_le_bytes(value[..8].try_into().unwrap()));
@@ -229,6 +228,9 @@ impl MwebInput {
         }
         if self.address_index.is_none() {
             self.address_index = other.address_index;
+        }
+        if self.address_descriptor.is_none() {
+            self.address_descriptor = other.address_descriptor;
         }
         if self.amount.is_none() {
             self.amount = other.amount;

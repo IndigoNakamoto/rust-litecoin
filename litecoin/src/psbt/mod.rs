@@ -16,6 +16,7 @@ mod map;
 pub mod mweb;
 pub mod raw;
 pub mod serialize;
+mod v2;
 
 use core::{cmp, fmt};
 #[cfg(feature = "std")]
@@ -2608,36 +2609,25 @@ mod tests {
     }
 
     #[test]
-    fn mweb_psbt_key_origins_roundtrip_ltcd_shape() {
-        use crate::bip32::{ChildNumber, DerivationPath, Fingerprint};
+    fn mweb_psbt_v2_descriptor_kernel_section_roundtrip() {
         use crate::blockdata::transaction;
-        use crate::psbt::serialize::Serialize;
-        use secp256k1::{Secp256k1, SecretKey};
 
-        let sk = SecretKey::from_slice(&[9u8; 32]).unwrap();
-        let pk = sk.public_key(&Secp256k1::new());
-        let fp = Fingerprint::from([0xab, 0xcd, 0xef, 0x01]);
-        let scan_path: DerivationPath = vec![
-            ChildNumber::from_hardened_idx(0).unwrap(),
-            ChildNumber::from_hardened_idx(100).unwrap(),
-            ChildNumber::from_hardened_idx(0).unwrap(),
-        ]
-        .into();
-        let spend_path: DerivationPath = vec![
-            ChildNumber::from_hardened_idx(0).unwrap(),
-            ChildNumber::from_hardened_idx(100).unwrap(),
-            ChildNumber::from_hardened_idx(1).unwrap(),
-        ]
-        .into();
-
+        let desc = "mweb([abcdef01/0'/100'/0']scan,[abcdef01/0'/100'/1']spend,0)";
+        let mut excess = [0u8; 33];
+        excess[0] = 2;
+        excess[1] = 7;
         let mweb_in = MwebInput {
             output_id: Some([3u8; 32]),
-            address_index: Some(0),
-            master_scan_key_origin: Some((pk, (fp, scan_path.clone()))),
-            master_spend_key_origin: Some((pk, (fp, spend_path.clone()))),
+            address_descriptor: Some(desc.into()),
+            amount: Some(50_000),
             ..MwebInput::default()
         };
-        mweb_in.validate_key_origins().unwrap();
+        let kernel = MwebKernel {
+            excess_commit: Some(excess),
+            fee: Some(1000),
+            features: Some(0),
+            ..MwebKernel::default()
+        };
 
         let psbt = Psbt {
             unsigned_tx: Transaction {
@@ -2656,21 +2646,26 @@ mod tests {
             outputs: vec![],
             mweb_tx_offset: Some([1u8; 32]),
             mweb_stealth_offset: Some([2u8; 32]),
-            mweb_kernels: vec![],
-            mweb_inputs: vec![mweb_in.clone()],
+            mweb_kernels: vec![kernel],
+            mweb_inputs: vec![mweb_in],
             mweb_outputs: vec![],
         };
 
-        let decoded = Psbt::deserialize(&psbt.serialize()).unwrap();
+        let bytes = psbt.serialize();
+        // LIP-0007: no unsigned_tx global (type 0x00). Magic + separator, then version 0xFB.
+        assert_eq!(&bytes[..5], b"psbt\xff");
+        let decoded = Psbt::deserialize(&bytes).unwrap();
+        assert_eq!(decoded.version, 2);
         assert_eq!(decoded.mweb_inputs.len(), 1);
-        let got = &decoded.mweb_inputs[0];
-        assert_eq!(got.address_index, Some(0));
-        let (got_pk, got_ks) = got.master_scan_key_origin.as_ref().unwrap();
-        assert_eq!(*got_pk, pk);
-        assert_eq!(got_ks.0, fp);
-        assert_eq!(got_ks.1, scan_path);
-        // ltcd SerializeBIP32Derivation wire: fingerprint || LE path indexes
-        assert_eq!(got_ks.serialize(), (fp, scan_path).serialize());
+        assert_eq!(
+            decoded.mweb_inputs[0].address_descriptor.as_deref(),
+            Some(desc)
+        );
+        assert!(decoded.mweb_inputs[0].master_scan_key_origin.is_none());
+        assert!(decoded.mweb_inputs[0].master_spend_key_origin.is_none());
+        assert_eq!(decoded.mweb_kernels.len(), 1);
+        assert_eq!(decoded.mweb_kernels[0].fee, Some(1000));
+        assert_eq!(decoded.mweb_tx_offset, Some([1u8; 32]));
     }
 
     /// Mirror ltcd `types.go` inventory + empty-vin pure-MWEB extract acceptance.

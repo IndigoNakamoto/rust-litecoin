@@ -51,6 +51,10 @@ impl Psbt {
 
     /// Serialize the PSBT into a writer.
     pub fn serialize_to_writer(&self, w: &mut impl Write) -> io::Result<usize> {
+        if self.should_serialize_v2() {
+            return self.serialize_v2_to_writer(w);
+        }
+
         let mut written_len = 0;
 
         fn write_all(w: &mut impl Write, data: &[u8]) -> io::Result<usize> {
@@ -95,35 +99,83 @@ impl Psbt {
             return Err(Error::InvalidSeparator);
         }
 
-        let mut global = Psbt::decode_global(r)?;
-        global.unsigned_tx_checks()?;
+        let (mut global, meta) = Psbt::decode_global(r)?;
+        if !meta.is_v2 {
+            global.unsigned_tx_checks()?;
+        }
 
-        let inputs: Vec<Input> = {
-            let inputs_len: usize = (global.unsigned_tx.input).len();
+        let mut inputs: Vec<Input> = Vec::with_capacity(meta.input_count);
+        for _ in 0..meta.input_count {
+            inputs.push(Input::decode(r)?);
+        }
 
-            let mut inputs: Vec<Input> = Vec::with_capacity(inputs_len);
+        let mut outputs: Vec<Output> = Vec::with_capacity(meta.output_count);
+        for _ in 0..meta.output_count {
+            outputs.push(Output::decode(r)?);
+        }
 
-            for _ in 0..inputs_len {
-                inputs.push(Input::decode(r)?);
+        if meta.is_v2 && meta.kernel_count > 0 {
+            global.mweb_kernels.clear();
+            for _ in 0..meta.kernel_count {
+                global.mweb_kernels.push(crate::psbt::v2::decode_kernel_map(r)?);
             }
+        }
 
-            inputs
-        };
-
-        let outputs: Vec<Output> = {
-            let outputs_len: usize = (global.unsigned_tx.output).len();
-
-            let mut outputs: Vec<Output> = Vec::with_capacity(outputs_len);
-
-            for _ in 0..outputs_len {
-                outputs.push(Output::decode(r)?);
+        if meta.is_v2 {
+            let mut canon_in = Vec::new();
+            let mut canon_txin = Vec::new();
+            let mut mweb_in = Vec::new();
+            for inp in inputs {
+                if inp.mweb.output_id.is_some() {
+                    mweb_in.push(inp.mweb);
+                } else {
+                    if let Some(op) = crate::psbt::v2::prevout_from_input(&inp) {
+                        canon_txin.push(crate::blockdata::transaction::TxIn {
+                            previous_output: op,
+                            script_sig: crate::ScriptBuf::new(),
+                            sequence: crate::blockdata::transaction::Sequence::MAX,
+                            witness: Default::default(),
+                        });
+                    }
+                    canon_in.push(inp);
+                }
             }
-
-            outputs
-        };
-
-        global.inputs = inputs;
-        global.outputs = outputs;
+            let mut canon_out = Vec::new();
+            let mut canon_txout = Vec::new();
+            let mut mweb_out = Vec::new();
+            for out in outputs {
+                if out.mweb.stealth_address.is_some() || out.mweb.commit.is_some() {
+                    mweb_out.push(out.mweb);
+                } else {
+                    if let Some(txo) = crate::psbt::v2::txout_from_output(&out) {
+                        canon_txout.push(txo);
+                    }
+                    canon_out.push(out);
+                }
+            }
+            if !mweb_in.is_empty() {
+                global.mweb_inputs = mweb_in;
+            }
+            if !mweb_out.is_empty() {
+                global.mweb_outputs = mweb_out;
+            }
+            if !canon_txin.is_empty() {
+                global.unsigned_tx.input = canon_txin;
+            } else if canon_in.is_empty() {
+                global.unsigned_tx.input.clear();
+            }
+            if !canon_txout.is_empty() {
+                global.unsigned_tx.output = canon_txout;
+            } else if canon_out.is_empty() {
+                global.unsigned_tx.output.clear();
+            }
+            global.inputs = canon_in;
+            global.outputs = canon_out;
+            global.version = 2;
+        } else {
+            global.inputs = inputs;
+            global.outputs = outputs;
+        }
         Ok(global)
     }
 }

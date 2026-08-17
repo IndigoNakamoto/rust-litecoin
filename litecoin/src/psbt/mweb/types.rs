@@ -30,8 +30,11 @@ pub const MWEB_INPUT_PUBKEY_TYPE: u8 = 0x93;
 pub const MWEB_INPUT_FEATURES_TYPE: u8 = 0x94;
 /// `MwebInputSignatureType`
 pub const MWEB_INPUT_SIGNATURE_TYPE: u8 = 0x95;
-/// `MwebAddressIndexType`
+/// LIP-0007 `PSBT_IN_MWEB_ADDR_DESCRIPTOR` (ASCII `mweb(...)`).
+/// A 4-byte value is the pre-descriptor address index and MUST be ignored.
 pub const MWEB_ADDRESS_INDEX_TYPE: u8 = 0x96;
+/// Alias used by LIP-0007 / Core v24 docs.
+pub const MWEB_ADDR_DESCRIPTOR_TYPE: u8 = MWEB_ADDRESS_INDEX_TYPE;
 /// `MwebInputAmountType`
 pub const MWEB_INPUT_AMOUNT_TYPE: u8 = 0x97;
 /// `MwebSharedSecretType`

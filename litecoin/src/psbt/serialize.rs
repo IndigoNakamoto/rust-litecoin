@@ -145,7 +145,11 @@ impl Psbt {
             let mut mweb_out = Vec::new();
             for out in outputs {
                 if out.mweb.stealth_address.is_some() || out.mweb.commit.is_some() {
-                    mweb_out.push(out.mweb);
+                    let mut m = out.mweb.clone();
+                    if m.amount.is_none() {
+                        m.amount = crate::psbt::v2::amount_from_output(&out);
+                    }
+                    mweb_out.push(m);
                 } else {
                     if let Some(txo) = crate::psbt::v2::txout_from_output(&out) {
                         canon_txout.push(txo);

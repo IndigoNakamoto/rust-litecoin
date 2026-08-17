@@ -2558,6 +2558,7 @@ mod tests {
             output_pubkey: Some(test_pubkey(5)),
             range_proof: Some(vec![0u8; 675]),
             signature: Some(vec![0u8; 64]),
+            amount: Some(50_000),
             ..MwebOutput::default()
         };
         let kernel = MwebKernel {
@@ -2601,6 +2602,7 @@ mod tests {
             decoded.mweb_outputs[0].stealth_address.as_ref().unwrap().len(),
             66
         );
+        assert_eq!(decoded.mweb_outputs[0].amount, Some(50_000));
 
         let tx = decoded.extract_tx_with_mweb().unwrap();
         assert!(tx.mw_tx.is_some());

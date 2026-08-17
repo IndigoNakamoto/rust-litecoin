@@ -31,6 +31,8 @@ pub struct MwebOutput {
     pub signature: Option<Vec<u8>>,
     /// Extra data.
     pub extra_data: Option<Vec<u8>>,
+    /// BIP-370 `PSBT_OUT_AMOUNT` (required on every v2 output, including MWEB).
+    pub amount: Option<u64>,
 }
 
 impl MwebOutput {
@@ -138,6 +140,9 @@ impl MwebOutput {
         }
         if self.extra_data.is_none() {
             self.extra_data = other.extra_data;
+        }
+        if self.amount.is_none() {
+            self.amount = other.amount;
         }
     }
 }

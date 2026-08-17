@@ -73,8 +73,7 @@ impl Psbt {
             written += write_all(w, &serialize_canonical_output(txout, out))?;
         }
         for mweb in &self.mweb_outputs {
-            let out = Output { mweb: mweb.clone(), ..Output::default() };
-            written += write_all(w, &out.serialize_map())?;
+            written += write_all(w, &serialize_mweb_output(mweb))?;
         }
 
         for kernel in &self.mweb_kernels {
@@ -210,6 +209,26 @@ fn serialize_canonical_output(txout: &TxOut, out: &Output) -> Vec<u8> {
     buf
 }
 
+fn serialize_mweb_output(mweb: &crate::psbt::mweb::MwebOutput) -> Vec<u8> {
+    let out = Output { mweb: mweb.clone(), ..Output::default() };
+    let mut pairs = out.get_pairs();
+    if let Some(amt) = mweb.amount {
+        pairs.insert(
+            0,
+            raw::Pair {
+                key: raw::Key { type_value: PSBT_OUT_AMOUNT, key: vec![] },
+                value: (amt as i64).to_le_bytes().to_vec(),
+            },
+        );
+    }
+    let mut buf = Vec::new();
+    for pair in pairs {
+        buf.extend(&pair.serialize());
+    }
+    buf.push(0x00);
+    buf
+}
+
 fn serialize_kernel_map(kernel: &MwebKernel) -> Vec<u8> {
     let mut buf = Vec::new();
     for (field_ty, key_data, value) in kernel.to_kv_pairs() {
@@ -253,6 +272,20 @@ pub(crate) fn prevout_from_input(inp: &Input) -> Option<OutPoint> {
         }
     })?;
     Some(OutPoint { txid, vout })
+}
+
+pub(crate) fn amount_from_output(out: &Output) -> Option<u64> {
+    if let Some(a) = out.mweb.amount {
+        return Some(a);
+    }
+    out.unknown.iter().find_map(|(k, v)| {
+        if k.type_value == PSBT_OUT_AMOUNT && k.key.is_empty() && v.len() == 8 {
+            let n = i64::from_le_bytes(v[..8].try_into().ok()?);
+            Some(n as u64)
+        } else {
+            None
+        }
+    })
 }
 
 pub(crate) fn txout_from_output(out: &Output) -> Option<TxOut> {
